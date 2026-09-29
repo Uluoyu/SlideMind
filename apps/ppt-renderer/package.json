@@ -1,0 +1,12 @@
+{
+  "name": "@slidemind/renderer", "version": "0.1.0", "private": true, "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.mjs",
+    "start": "node src/server.mjs",
+    "build": "node --check src/server.mjs && node --check src/render.mjs",
+    "test": "node --test test/*.test.mjs",
+    "example": "node src/example.mjs"
+  },
+  "dependencies": { "ajv": "^8.17.1", "pptxgenjs": "^4.0.1" },
+  "devDependencies": { "jszip": "^3.10.1" }
+}

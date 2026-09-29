@@ -1,0 +1,31 @@
+{
+  "name": "slidemind",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/web",
+    "apps/ppt-renderer"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "npm run dev --workspace @slidemind/web",
+    "dev:api": "uv run uvicorn slidemind_api.main:app --reload --host 127.0.0.1 --port 8000",
+    "dev:renderer": "npm run dev --workspace @slidemind/renderer",
+    "db:migrate": "uv run alembic upgrade head",
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspace @slidemind/renderer",
+    "test:e2e": "playwright test",
+    "test:api": "uv run pytest -q",
+    "lint:python": "uv run ruff check .",
+    "schema:export": "uv run python scripts/export_schema.py",
+    "schema:check": "uv run python scripts/export_schema.py --check",
+    "render:example": "npm run example --workspace @slidemind/renderer"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "jszip": "^3.10.1",
+    "prettier": "^3.9.9"
+  }
+}

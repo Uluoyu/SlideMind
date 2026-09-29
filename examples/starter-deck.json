@@ -1,0 +1,23 @@
+{
+  "title": "SlideMind 基础框架",
+  "pages": [
+    {
+      "page_no": 1,
+      "layout": "title",
+      "title": "让想法，成为有说服力的表达。",
+      "subtitle": "SlideMind · 个人 PPT 智能工作台",
+      "content": [
+        { "title": "框架演示", "text": "本示例用于验证 Page JSON 到 PPTX 的渲染链路，不包含真实项目数据。" }
+      ]
+    },
+    {
+      "page_no": 2,
+      "layout": "two_column",
+      "title": "从资料到表达，逐步建立完整工作流",
+      "content": [
+        { "title": "项目与资料", "text": "管理项目空间、上传资料与素材，记录安全等级和原始文件元数据。" },
+        { "title": "策划与确认", "text": "先形成大纲，再由用户调整页面主题和用途，为后续内容生成建立边界。" }
+      ]
+    }
+  ]
+}

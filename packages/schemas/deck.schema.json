@@ -1,0 +1,218 @@
+{
+  "$defs": {
+    "PageSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "schema_version": {
+          "const": "1.0",
+          "default": "1.0",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "page_no": {
+          "minimum": 1,
+          "title": "Page No",
+          "type": "integer"
+        },
+        "layout": {
+          "enum": [
+            "title",
+            "two_column",
+            "summary"
+          ],
+          "title": "Layout",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "subtitle": {
+          "default": "",
+          "maxLength": 160,
+          "title": "Subtitle",
+          "type": "string"
+        },
+        "content": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/TextBlock"
+          },
+          "maxItems": 4,
+          "title": "Content",
+          "type": "array"
+        }
+      },
+      "required": [
+        "page_no",
+        "layout",
+        "title"
+      ],
+      "title": "PageSpec",
+      "type": "object"
+    },
+    "SourceReference": {
+      "additionalProperties": false,
+      "properties": {
+        "document_id": {
+          "exclusiveMinimum": 0,
+          "title": "Document Id",
+          "type": "integer"
+        },
+        "file_name": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "File Name",
+          "type": "string"
+        },
+        "page_no": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Page No"
+        },
+        "excerpt": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Excerpt",
+          "type": "string"
+        }
+      },
+      "required": [
+        "document_id",
+        "file_name",
+        "excerpt"
+      ],
+      "title": "SourceReference",
+      "type": "object"
+    },
+    "TextBlock": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "text",
+          "default": "text",
+          "title": "Type",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 60,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "text": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "sources": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SourceReference"
+          },
+          "maxItems": 20,
+          "title": "Sources",
+          "type": "array"
+        }
+      },
+      "required": [
+        "title",
+        "text"
+      ],
+      "title": "TextBlock",
+      "type": "object"
+    },
+    "Theme": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "default": "SlideMind Starter",
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "primary_color": {
+          "default": "#315C4E",
+          "pattern": "^#[0-9A-Fa-f]{6}$",
+          "title": "Primary Color",
+          "type": "string"
+        },
+        "background_color": {
+          "default": "#F5F5F0",
+          "pattern": "^#[0-9A-Fa-f]{6}$",
+          "title": "Background Color",
+          "type": "string"
+        },
+        "text_color": {
+          "default": "#182A23",
+          "pattern": "^#[0-9A-Fa-f]{6}$",
+          "title": "Text Color",
+          "type": "string"
+        },
+        "font_family": {
+          "default": "Microsoft YaHei",
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Font Family",
+          "type": "string"
+        },
+        "footer": {
+          "default": "SlideMind",
+          "maxLength": 100,
+          "title": "Footer",
+          "type": "string"
+        }
+      },
+      "title": "Theme",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "title": {
+      "maxLength": 255,
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    },
+    "theme": {
+      "$ref": "#/$defs/Theme",
+      "default": {
+        "name": "SlideMind Starter",
+        "primary_color": "#315C4E",
+        "background_color": "#F5F5F0",
+        "text_color": "#182A23",
+        "font_family": "Microsoft YaHei",
+        "footer": "SlideMind"
+      }
+    },
+    "pages": {
+      "items": {
+        "$ref": "#/$defs/PageSpec"
+      },
+      "maxItems": 50,
+      "minItems": 1,
+      "title": "Pages",
+      "type": "array"
+    }
+  },
+  "required": [
+    "title",
+    "pages"
+  ],
+  "title": "DeckSpec",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

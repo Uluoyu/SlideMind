@@ -216,3 +216,13 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+/.omc/
+
+# SlideMind runtime and build artifacts
+node_modules/
+data/
+artifacts/
+*.tsbuildinfo
+.env.*
+!.env.example
+.idea/
