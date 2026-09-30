@@ -1,12 +1,19 @@
-# 基础框架架构
+# 基础框架与 Phase 2 架构
 
-当前实现沿用设计文档的模块边界，优先打通独立可运行的本地流程。模型推理、资料理解与视觉检查尚未接入。
+当前实现沿用设计文档的模块边界，已打通 PPT 基础流程与项目文档解析/RAG。Embedding 和重排支持实际模型服务；PPT 大纲、正文生成及视觉检查尚未接入模型。
 
 ```mermaid
 flowchart LR
   Web[React 工作台] --> API[FastAPI]
   API --> DB[(SQLite / PostgreSQL)]
   API --> Store[LocalStore / MinIO]
+  API --> Queue[持久化资料状态与租约]
+  Queue --> Parser[PDF / DOCX / PPTX / TXT / MD]
+  Parser --> Embedding[HTTP / 本地 Embedding]
+  Embedding --> DB
+  API --> Search[项目过滤与混合检索]
+  Search --> DB
+  Search --> Reranker[可选 HTTP Reranker]
   API --> Agent[本地 Planner / 页面草稿]
   Agent --> JSON[PageSpec / DeckSpec]
   API -->|DeckSpec JSON| Renderer[Node / PptxGenJS]
@@ -38,7 +45,7 @@ flowchart LR
 
 - 最多 50 页，每页最多 4 个文本块；页码从 1 连续排列。
 - 布局支持 `title`、`two_column`、`summary`。主题默认值由共享 Schema 提供。
-- 引用包含 `document_id`、`file_name`、可选 `page_no`、`excerpt`。当前页面草稿不自动添加引用；API 支持提交引用并校验项目、文件名和服务端安全等级。自动检索以及摘录真实性核实属于后续 RAG/内容校验工作。
+- 引用包含 `document_id`、`file_name`、可选 `page_no`、`excerpt`。RAG 引用由服务端从实际分块构建，提供独立来源查看入口。当前页面草稿不自动添加检索引用；手动提交页面引用仍只校验项目、文件名和安全等级，正文事实及手动摘录真实性核实属于后续 Content Agent 工作。
 - 模板、项目资料、素材分别存储。关联模板仅保存选择关系，不代表已经解析和应用模板。
 - 页面正文保存在 `ppt_page.page_json`，大纲的标题与用途保持原始策划记录。导出时使用 Page JSON 中编辑后的标题。
 
@@ -51,6 +58,9 @@ flowchart LR
 | `GET/POST /projects` | 列出/创建项目 |
 | `GET /projects/{id}` | 读取项目 |
 | `GET/POST /projects/{id}/documents` | 项目资料列表/上传 |
+| `POST /projects/{id}/documents/{fileId}/process` | 幂等提交解析、失败重试或重新索引 |
+| `POST /projects/{id}/search` | 接收 `{query, topK}`，返回来源、分块 ID、排名分数及重排状态 |
+| `GET /projects/{id}/documents/{fileId}/chunks/{chunkId}` | 校验项目、安全等级和索引状态后读取原文 |
 | `GET/POST /projects/{id}/assets` | 图片素材列表/上传 |
 | `GET/POST /templates` | 共享公司模板列表/上传 |
 | `GET /projects/{id}/presentations` | 项目中的 PPT 任务 |
@@ -69,6 +79,19 @@ flowchart LR
 未确认大纲、缺少页面或版本冲突返回 409；非法 Page JSON 返回 422；跨项目访问返回 404。无权访问页面引用返回 403；非法新增引用返回 422。渲染器/存储故障返回 503。
 
 ## 状态与一致性
+
+项目资料和 PPT 任务使用各自的状态。资料处理链路为：
+
+```text
+QUEUED → PARSING → INDEXING → READY
+            └── 错误 ────────→ FAILED → 用户重试 → QUEUED
+```
+
+上传事务保存文件和 QUEUED 状态；旧 UPLOADED 资料同样可由 worker 接管。后台单机 worker 通过条件更新领取持久化租约，每批 32 个片段；读取文件、解析和模型请求均不持有业务写事务。租约每三分之一周期续期，过期任务可被其他 worker 接管；批次间检查所有权，过期 worker 不再发送新批次，也不能发布结果。正常关闭会释放当前租约并重新排队。
+
+READY 与分块替换在同一事务提交，只有完整索引可参与检索。重复提交处理中任务不会重复入队。重建时旧分块保留但隐藏，失败可重试；SQLite 分块主键使用 AUTOINCREMENT，避免旧来源 URL 命中新建片段。向量模型标识、版本和维度保存在文档上，不混用不同模型的向量。
+
+PPT 任务链路为：
 
 ```text
 DRAFT → OUTLINE_GENERATED → OUTLINE_CONFIRMED → DESIGN_GENERATED
@@ -92,21 +115,25 @@ DRAFT → OUTLINE_GENERATED → OUTLINE_CONFIRMED → DESIGN_GENERATED
 
 `projectId` 必须与数据库中 PPT 所属项目一致。来源引用在保存、读取、渲染和下载时检查；安全等级由服务端配置决定，不能通过请求提升权限。文件列表同样按等级过滤。
 
-文件名清理、大小限制、SHA-256、随机对象键及本地路径边界检查由存储模块处理。API 不返回磁盘路径，也不将存储目录直接公开为静态资源。下载使用 `Cache-Control: no-store`。上传仅完成扩展名和体积等基础检查，文件解析是独立后续阶段。
+文件名清理、大小限制、SHA-256、随机对象键及本地路径边界检查由存储模块处理。API 不返回磁盘路径，也不将存储目录直接公开为静态资源。下载、检索和原文查看使用 `Cache-Control: no-store`。解析器限制输入、OOXML 解压规模及文本总量；扫描 PDF、空文档、损坏文件和未支持格式返回明确失败原因。
+
+检索先在数据库中限定项目、安全等级、READY 状态及模型版本/维度，再进行向量与关键词排名。PostgreSQL 使用 pgvector 的精确余弦查询；SQLite 在已过滤候选集上计算余弦。当前针对个人资料量使用精确检索，并未建立 HNSW/IVFFlat 索引。关键词支持中文双字词与英文/数字标识，评分是排序信号，不代表事实可信度。
+
+启用重排时，仅向服务发送已过滤的最多 20 个候选片段；返回后再次检查有效分块，避免重建期间发布过期结果。`mode=hybrid-rerank` 表示已完成重排；失败时 `mode=hybrid` 且附带前端展示的 warning。Qwen3 成对评分通过配置添加官方判定模板，服务端已套用模板时应使用 plain 格式。
 
 当前不包含身份认证。`projectId` 和安全等级过滤是单用户上下文隔离，不是面向不可信多用户的完整访问控制。Node 渲染器只接收 Page JSON、只监听本机回环地址，不读取用户路径或外部图片 URL。
 
 ## 后续接入顺序
 
-1. **文档解析与 RAG**：实现 `DocumentParser`、`Embedder`、`Retriever`，将解析内容写入 `DocumentChunk`；先按 `RetrievalContext.project_id/clearance` 过滤，再排序，输出 `SourceReference`。
+1. **文档解析与 RAG（已实现）**：解析、分块、持久化处理、HTTP/本地 Embedding、项目过滤、混合检索、可选重排和来源查看；后续再扩展 OCR、XLSX、图片语义与大规模索引。
 2. **公司模板**：解析模板为 `DesignSystem.design_json`，经校验转换为 Theme 和受支持的布局，保留与素材库的分离。
 3. **模型与 Agent**：为已有 `Planner` 协议添加模型实现；由服务端配置选择 provider。当前不包含 DeepSeek Harness 依赖、模型调用或密钥配置。
 4. **内容与素材**：内容生成消费检索证据，素材选择仅引用实际上传资源；扩展 PageSpec 的同时更新 Renderer。
 5. **预览与 QA**：LibreOffice 转 PDF/PNG，再实现 `VisionInspector`；当前网页展示的是结构示意，不是最终 PPT 截图。
-6. **长任务与修复**：引入任务表/队列、生成事件、取消和重试，按页保存修改历史，替换当前同步渲染事务。
+6. **PPT 长任务与修复**：资料解析已有持久化 worker；PPT 生成仍需任务队列、生成事件、取消和重试，按页保存修改历史，替换当前同步渲染事务。
 
 ## 验证边界
 
 Python 测试通过临时 SQLite 和实际 Alembic 迁移验证持久化及权限；API 故障测试替换 Renderer 协议并模拟存储失败。Node 测试实际生成并读取 PPTX ZIP 内容。Playwright 使用独立数据库启动真实三个服务，验证从创建到编辑、下载和刷新恢复的完整流程。
 
-PostgreSQL/MinIO 的 Compose 配置可用于集成环境；本地自动化用 SQLite/LocalStore，不将其结果等同于 PostgreSQL/MinIO 已实测。
+普通测试使用 SQLite/LocalStore；模型边界测试覆盖错序、缺失、无效向量、重复重排索引及失败处理。实际内网模型验收覆盖中文检索、无关查询、重排和 PDF 原文页码追溯；可选 MinIO 验收实际上传 PDF、读取并完成模型检索，结束时仅删除本次上传的随机对象。可选 PostgreSQL 测试使用随机独立 schema 验证迁移、pgvector 维度与过滤；已通过原生 PostgreSQL 16.15 + pgvector 0.8.6 验证。完整服务验收组合真实 PostgreSQL、MinIO、Embedding 和 Reranker，覆盖后台 PDF 索引、API 重启后的检索、来源页码与项目隔离。远程业务表已迁移，当前配置的启动和就绪检查通过。详见 [Phase 2 验收记录](./phase2-verification.md)。

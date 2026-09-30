@@ -6,6 +6,19 @@ export interface StoredFile {
   id: number; fileName: string; fileType: string; sizeBytes: number;
   securityLevel: string; status: string; createdAt: string;
 }
+export type DocumentStatus = 'UPLOADED' | 'QUEUED' | 'PARSING' | 'INDEXING' | 'READY' | 'FAILED';
+export interface ProjectDocument extends StoredFile {
+  status: DocumentStatus; processingError: string | null; chunkCount: number; processedAt: string | null;
+}
+export interface SearchHit {
+  chunkId: number; score: number; source: SourceReference; location: string | null;
+}
+export interface SearchResult {
+  query: string; hits: SearchHit[]; mode: 'hybrid' | 'hybrid-rerank'; warning: string | null;
+}
+export interface DocumentChunk {
+  id: number; chunkIndex: number; pageNo: number | null; content: string; metadata: Record<string, unknown>;
+}
 export interface Presentation {
   id: number; projectId: number; title: string; pageCount: number;
   audience: string; style: string; requirements: string[]; status: string;

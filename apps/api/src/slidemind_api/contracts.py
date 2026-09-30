@@ -40,6 +40,12 @@ class FileView(DTO):
     created_at: datetime
 
 
+class DocumentView(FileView):
+    processing_error: str | None
+    chunk_count: int
+    processed_at: datetime | None
+
+
 class PresentationCreate(DTO):
     project_id: int = Field(gt=0)
     title: str = Field(min_length=1, max_length=255)

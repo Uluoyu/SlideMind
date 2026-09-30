@@ -17,7 +17,6 @@ database_url = f"sqlite:///{(root / 'test.db').as_posix()}"
 os.environ["SLIDEMIND_DATABASE_URL"] = database_url
 command.upgrade(Config("alembic.ini"), "head")
 settings = Settings(
-    _env_file=None,
     database_url=database_url,
     storage_backend="local",
     storage_root=root / "storage",

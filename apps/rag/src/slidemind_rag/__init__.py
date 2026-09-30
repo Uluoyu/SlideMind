@@ -1,1 +1,1 @@
-"""Retrieval contracts. Embedding and hybrid search are not connected yet."""
+"""Local embeddings and project-scoped hybrid retrieval building blocks."""

@@ -40,6 +40,14 @@ class Document(StoredFile, Base):
     __tablename__ = "ppt_document"
     id: Mapped[int] = mapped_column(primary_key=True)
     project_id: Mapped[int] = mapped_column(ForeignKey("ppt_project.id"), index=True)
+    processing_error: Mapped[str | None] = mapped_column(Text)
+    chunk_count: Mapped[int] = mapped_column(default=0)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    embedding_model: Mapped[str | None] = mapped_column(String(255))
+    embedding_dimensions: Mapped[int | None]
+    lease_token: Mapped[str | None] = mapped_column(String(64))
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(default=0)
 
 
 class Asset(StoredFile, Base):
@@ -67,7 +75,10 @@ class DesignSystem(Timestamped, Base):
 
 class DocumentChunk(Base):
     __tablename__ = "ppt_document_chunk"
-    __table_args__ = (UniqueConstraint("document_id", "chunk_index"),)
+    __table_args__ = (
+        UniqueConstraint("document_id", "chunk_index"),
+        {"sqlite_autoincrement": True},
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
     document_id: Mapped[int] = mapped_column(ForeignKey("ppt_document.id"), index=True)
     content: Mapped[str] = mapped_column(Text)

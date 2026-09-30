@@ -19,6 +19,7 @@ def settings(tmp_path, monkeypatch):
         storage_backend="local",
         max_upload_mb=1,
         security_clearance="CONFIDENTIAL",
+        ingestion_enabled=False,
     )
 
 

@@ -20,7 +20,7 @@ def test_project_and_file_survive_restart(client, settings):
     path = f"{PREFIX}/projects/{project_id}/documents"
     response = client.post(path, files={"file": ("../report.md", b"Source evidence", "text/plain")})
     assert response.status_code == 201
-    assert response.json()["status"] == "UPLOADED"
+    assert response.json()["status"] == "QUEUED"
     assert response.json()["fileName"] == "report.md"
     assert "storagePath" not in response.json()
     with client.app.state.sessions() as db:

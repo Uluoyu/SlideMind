@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from slidemind_agent.planner import LocalPlanner, PlanningRequest
 from slidemind_agent.workflow import can_generate_outline
 from slidemind_api.contracts import (
+    DocumentView,
     FileView,
     OutlineInput,
     OutlinePage,
@@ -124,12 +125,12 @@ def save_file(
     return record
 
 
-@router.get("/projects/{project_id}/documents", response_model=list[FileView])
+@router.get("/projects/{project_id}/documents", response_model=list[DocumentView])
 def list_documents(project_id: int, db: DB, request: Request):
     return list_files(db, request, Document, project_id)
 
 
-@router.post("/projects/{project_id}/documents", response_model=FileView, status_code=201)
+@router.post("/projects/{project_id}/documents", response_model=DocumentView, status_code=201)
 def upload_document(
     project_id: int,
     file: UploadFile,
@@ -147,6 +148,7 @@ def upload_document(
         f"projects/{project_id}/documents",
         {"pdf", "docx", "pptx", "xlsx", "txt", "md"},
         project_id=project_id,
+        status="QUEUED",
     )
 
 

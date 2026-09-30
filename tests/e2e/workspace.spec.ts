@@ -4,7 +4,7 @@ import JSZip from 'jszip';
 
 test('create, confirm, edit, render, download and reopen a presentation', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: '创建第一个项目' }).click();
+  await page.getByRole('button', { name: '创建项目', exact: true }).click();
   await page.getByLabel('项目名称').fill('浏览器验收项目');
   await page.locator('form').getByRole('button', { name: '创建项目', exact: true }).click();
   await page.getByRole('button', { name: '新建 PPT', exact: true }).click();
