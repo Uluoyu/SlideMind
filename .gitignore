@@ -226,3 +226,6 @@ artifacts/
 .env.*
 !.env.example
 .idea/
+# 真实公司模板属于内部资料，只在本地验收使用
+tests/*.pptx
+**/.omc/
