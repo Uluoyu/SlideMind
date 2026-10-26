@@ -59,3 +59,7 @@
 @media(max-width:800px){.file-security{display:none}.library-search{padding:20px}}
 @media(max-width:600px){.library-search{padding:17px}.search-actions{flex-direction:column}.search-actions .primary{align-self:flex-end}.file-row{align-items:flex-start;flex-wrap:wrap}.file-name{flex-basis:calc(100% - 50px)}.file-status-actions{margin-left:49px;flex-direction:row;align-items:center;flex-wrap:wrap}.source-heading{gap:8px}.search-result,.source-detail{padding:14px}.source-heading .secondary{padding:6px 8px}.library .tabs{gap:0}.library .tabs button{flex:1;white-space:nowrap;padding-left:6px;padding-right:6px}}
 @media(max-width:600px){.page-tabs button{flex-basis:130px}.slide-preview{padding:20px}.preview-content.columns{grid-template-columns:1fr}.page-actions>div{width:100%}.page-actions button{flex:auto}.page-fields .form-grid{gap:0}.content-block{padding:12px}}
+
+/* Phase 3: project template association bar */
+.template-bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:0 0 22px;padding:14px 16px;background:white;border:1px solid #dce5d6;border-radius:9px}
+.template-bar select{max-width:300px}

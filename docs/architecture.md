@@ -1,6 +1,6 @@
-# 基础框架与 Phase 2 架构
+# 基础框架、Phase 2 与 Phase 3 架构
 
-当前实现沿用设计文档的模块边界，已打通 PPT 基础流程与项目文档解析/RAG。Embedding 和重排支持实际模型服务；PPT 大纲、正文生成及视觉检查尚未接入模型。
+当前实现沿用设计文档的模块边界，已打通 PPT 基础流程、项目文档解析/RAG 与公司模板主题应用。Embedding 和重排支持实际模型服务；PPT 大纲、正文生成及视觉检查尚未接入模型。
 
 ```mermaid
 flowchart LR
@@ -44,7 +44,8 @@ flowchart LR
 ```
 
 - 最多 50 页，每页最多 4 个文本块；页码从 1 连续排列。
-- 布局支持 `title`、`two_column`、`summary`。主题默认值由共享 Schema 提供。
+- 布局支持 `title`、`two_column`、`summary`。主题默认值由共享 Schema 提供：`Theme` 含主色/背景/文字颜色与标题、正文字体；`DeckSpec.slide_size` 以英寸描述页面尺寸（默认 13.3333×7.5）。
+- 公司模板解析为 `TemplateDesign`（`packages/schemas/design.py`：主题配色槽位、标题/正文字体、EMU 页面尺寸、版式清单），存入 `ppt_design_system.design_json`，每次成功解析按版本追加，渲染时最新一行生效；渲染映射为 accent1→主色、lt1→背景、dk1→文字。
 - 引用包含 `document_id`、`file_name`、可选 `page_no`、`excerpt`。RAG 引用由服务端从实际分块构建，提供独立来源查看入口。当前页面草稿不自动添加检索引用；手动提交页面引用仍只校验项目、文件名和安全等级，正文事实及手动摘录真实性核实属于后续 Content Agent 工作。
 - 模板、项目资料、素材分别存储。关联模板仅保存选择关系，不代表已经解析和应用模板。
 - 页面正文保存在 `ppt_page.page_json`，大纲的标题与用途保持原始策划记录。导出时使用 Page JSON 中编辑后的标题。
@@ -62,7 +63,9 @@ flowchart LR
 | `POST /projects/{id}/search` | 接收 `{query, topK}`，返回来源、分块 ID、排名分数及重排状态 |
 | `GET /projects/{id}/documents/{fileId}/chunks/{chunkId}` | 校验项目、安全等级和索引状态后读取原文 |
 | `GET/POST /projects/{id}/assets` | 图片素材列表/上传 |
-| `GET/POST /templates` | 共享公司模板列表/上传 |
+| `GET/POST /templates` | 共享公司模板列表/上传（上传内同步解析主题，失败仍 201 并标记） |
+| `POST /templates/{id}/process` | 幂等重试或重新解析模板主题 |
+| `POST /projects/{id}/template` | 设置、更换或清除项目关联的公司模板 |
 | `GET /projects/{id}/presentations` | 项目中的 PPT 任务 |
 | `POST /documents` | 创建 PPT 任务 |
 | `GET /documents/{id}` | 读取任务状态 |
@@ -90,6 +93,15 @@ QUEUED → PARSING → INDEXING → READY
 上传事务保存文件和 QUEUED 状态；旧 UPLOADED 资料同样可由 worker 接管。后台单机 worker 通过条件更新领取持久化租约，每批 32 个片段；读取文件、解析和模型请求均不持有业务写事务。租约每三分之一周期续期，过期任务可被其他 worker 接管；批次间检查所有权，过期 worker 不再发送新批次，也不能发布结果。正常关闭会释放当前租约并重新排队。
 
 READY 与分块替换在同一事务提交，只有完整索引可参与检索。重复提交处理中任务不会重复入队。重建时旧分块保留但隐藏，失败可重试；SQLite 分块主键使用 AUTOINCREMENT，避免旧来源 URL 命中新建片段。向量模型标识、版本和维度保存在文档上，不混用不同模型的向量。
+
+公司模板链路为：
+
+```text
+UPLOADED →（上传内同步解析）→ READY
+    └── 解析失败 ──→ FAILED → 用户重试 → 重新解析
+```
+
+解析仅读取 PPTX 的 XML（presentation.xml 尺寸、theme 配色与字体、版式清单），不调用模型；失败原因存于 `ppt_template.processing_error`。每次成功解析追加一行 `ppt_design_system`（version 递增），渲染取最新；并发重复解析只会多出同版本行，按 `(version, id)` 倒序取值结果确定。必需配色或字体缺失、文件损坏或加密、页面尺寸越界都判定 FAILED，不虚构主题值。导出时解析项目关联模板：模板安全等级超出当前授权返回 403；未关联、未就绪或 design_json 校验失败回退默认主题，响应的 `themeSource`/`themeName` 说明实际来源，前端据此提示。
 
 PPT 任务链路为：
 
@@ -126,7 +138,7 @@ DRAFT → OUTLINE_GENERATED → OUTLINE_CONFIRMED → DESIGN_GENERATED
 ## 后续接入顺序
 
 1. **文档解析与 RAG（已实现）**：解析、分块、持久化处理、HTTP/本地 Embedding、项目过滤、混合检索、可选重排和来源查看；后续再扩展 OCR、XLSX、图片语义与大规模索引。
-2. **公司模板**：解析模板为 `DesignSystem.design_json`，经校验转换为 Theme 和受支持的布局，保留与素材库的分离。
+2. **公司模板（已实现主题级）**：解析模板为 `DesignSystem.design_json` 并在导出时转换为 Theme 与页面尺寸；Logo/背景图提取、占位符与字号级布局映射留待后续阶段。
 3. **模型与 Agent**：为已有 `Planner` 协议添加模型实现；由服务端配置选择 provider。当前不包含 DeepSeek Harness 依赖、模型调用或密钥配置。
 4. **内容与素材**：内容生成消费检索证据，素材选择仅引用实际上传资源；扩展 PageSpec 的同时更新 Renderer。
 5. **预览与 QA**：LibreOffice 转 PDF/PNG，再实现 `VisionInspector`；当前网页展示的是结构示意，不是最终 PPT 截图。

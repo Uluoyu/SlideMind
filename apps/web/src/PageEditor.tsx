@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Download, FileOutput, Plus, Save, Trash2 } from 'lucide-react';
-import { api, apiResponse, post, type PageRecord, type Pages, type PageSpec } from './api';
+import { api, apiResponse, post, type PageRecord, type Pages, type PageSpec, type RenderResult } from './api';
 
-export default function PageEditor({ documentId, projectId, onStatus, onBusy, onDirty }: {
-  documentId: number; projectId: number;
+export default function PageEditor({ documentId, projectId, templateName, onStatus, onBusy, onDirty }: {
+  documentId: number; projectId: number; templateName: string | null;
   onStatus: (status: string) => void; onBusy: (busy: boolean) => void; onDirty: (dirty: boolean) => void;
 }) {
   const [data, setData] = useState<Pages | null>(null);
@@ -72,9 +72,10 @@ export default function PageEditor({ documentId, projectId, onStatus, onBusy, on
     if (!data) return;
     void run(async () => {
       try {
-        const result = await api<{ status: string }>(`${base}/render${scope}`, post());
+        const result = await api<RenderResult>(`${base}/render${scope}`, post());
         setData({ ...data, status: result.status }); onStatus(result.status);
-        setNotice('PPTX 已生成，可以下载。');
+        setNotice(result.themeSource === 'template' ? `PPTX 已生成（应用模板主题「${result.themeName}」），可以下载。` :
+          templateName ? '公司模板未能应用，本次导出使用默认主题。' : 'PPTX 已生成，可以下载。');
       } catch (error) {
         // A transport error alone cannot tell us whether the server finished rendering.
         const latest = await api<{ status: string }>(`${base}${scope}`).catch(() => null);
@@ -99,7 +100,8 @@ export default function PageEditor({ documentId, projectId, onStatus, onBusy, on
   return <section className="page-editor" aria-label="页面编辑器">
     <div className="section-heading"><div><span className="eyebrow">SHAPE YOUR STORY</span><h2>把思路，写成每一页。</h2></div>
       <span className="badge">{data?.pages.length ?? 0} 页</span></div>
-    <p className="hint">草稿来自已确认的大纲，请补充并核实项目内容。当前使用默认主题；上传的公司模板尚未应用。</p>
+    <p className="hint">草稿来自已确认的大纲，请补充并核实项目内容。{templateName ?
+      `导出将应用公司模板「${templateName}」的主题颜色、字体与页面尺寸。` : '未关联公司模板，导出使用默认主题。'}</p>
     {error && <div role="alert" className="message error">{error}</div>}
     {notice && <div role="status" className="message success">{notice}</div>}
     {!complete && <button className="primary" disabled={busy || dirty} onClick={generate}><Plus size={16} />生成页面草稿</button>}

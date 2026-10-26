@@ -39,13 +39,24 @@ class Theme(Contract):
     primary_color: str = Field(default="#315C4E", pattern=r"^#[0-9A-Fa-f]{6}$")
     background_color: str = Field(default="#F5F5F0", pattern=r"^#[0-9A-Fa-f]{6}$")
     text_color: str = Field(default="#182A23", pattern=r"^#[0-9A-Fa-f]{6}$")
-    font_family: str = Field(default="Microsoft YaHei", min_length=1, max_length=100)
+    title_font_family: str = Field(default="Microsoft YaHei", min_length=1, max_length=100)
+    body_font_family: str = Field(default="Microsoft YaHei", min_length=1, max_length=100)
     footer: str = Field(default="SlideMind", max_length=100)
+
+
+class SlideSize(Contract):
+    """Slide geometry in inches (PptxGenJS defineLayout units); 5-56in covers PowerPoint's range."""
+
+    width: float = Field(default=13.3333, ge=5, le=56)
+    height: float = Field(default=7.5, ge=5, le=56)
 
 
 class DeckSpec(Contract):
     title: str = Field(min_length=1, max_length=255)
     theme: Theme = Field(default_factory=Theme, json_schema_extra={"default": Theme().model_dump()})
+    slide_size: SlideSize = Field(
+        default_factory=SlideSize, json_schema_extra={"default": SlideSize().model_dump()}
+    )
     pages: list[PageSpec] = Field(min_length=1, max_length=50)
 
     @model_validator(mode="after")

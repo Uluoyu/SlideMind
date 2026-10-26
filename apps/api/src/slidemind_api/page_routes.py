@@ -2,18 +2,28 @@ import logging
 from io import BytesIO
 
 from fastapi import APIRouter, HTTPException, Request, Response
+from pydantic import ValidationError
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from slidemind_agent.pages import scaffold_page
 from slidemind_agent.planner import PlannedPage
 from slidemind_api.contracts import PagesView, PageUpdate, PageView, RenderView
-from slidemind_api.models import Document, Page, Presentation, utcnow
+from slidemind_api.models import (
+    DesignSystem,
+    Document,
+    Page,
+    Presentation,
+    Project,
+    Template,
+    utcnow,
+)
 from slidemind_api.rendering import PPTX_MEDIA_TYPE, RenderInputTooLarge, encode_deck, validate_pptx
 from slidemind_api.routes import DB, ProjectId, presentation_or_404
 from slidemind_api.storage import object_key
 from slidemind_common.security import allowed_levels
-from slidemind_schemas.page import DeckSpec, PageSpec
+from slidemind_schemas.design import EMU_PER_INCH, TemplateDesign
+from slidemind_schemas.page import DeckSpec, PageSpec, SlideSize, Theme
 
 router = APIRouter(prefix="/api/ppt/documents", tags=["pages"])
 logger = logging.getLogger(__name__)
@@ -72,6 +82,61 @@ def check_sources(db: Session, request: Request, project_id: int, specs, status_
         for source in refs
     ):
         raise HTTPException(status_code, "页面引用了当前项目之外或无权访问的资料")
+
+
+def resolve_design(
+    db: Session, request: Request, presentation: Presentation
+) -> tuple[Theme, SlideSize, str, str]:
+    """Map the project's company template onto render theme facts.
+
+    Unusable templates (missing, not parsed, invalid design rows) fall back to the
+    DeckSpec defaults instead of failing the render; only clearance is a hard 403.
+    """
+    theme = Theme()
+    defaults = (theme, SlideSize(), "default", theme.name)
+    project = db.get(Project, presentation.project_id)
+    if project is None or project.template_id is None:
+        return defaults
+    template = db.get(Template, project.template_id)
+    if template is None:
+        logger.info("Project %s points at missing template %s", project.id, project.template_id)
+        return defaults
+    if template.security_level not in allowed_levels(request.app.state.settings.security_clearance):
+        raise HTTPException(403, "项目关联的公司模板当前不可访问")
+    if template.status != "READY":
+        logger.info("Template %s is not READY; using the default theme", template.id)
+        return defaults
+    row = db.scalar(
+        select(DesignSystem)
+        .where(DesignSystem.template_id == template.id)
+        .order_by(DesignSystem.version.desc(), DesignSystem.id.desc())
+        .limit(1)
+    )
+    if row is None:
+        logger.info("Template %s has no stored design system", template.id)
+        return defaults
+    try:
+        design = TemplateDesign.model_validate(row.design_json)
+    except ValidationError:
+        logger.warning("Stored design system for template %s failed validation", template.id)
+        return defaults
+    name = template.name[:100]
+    return (
+        Theme(
+            name=name,
+            primary_color=design.accent1,
+            background_color=design.lt1,
+            text_color=design.dk1,
+            title_font_family=design.title_font,
+            body_font_family=design.body_font,
+        ),
+        SlideSize(
+            width=round(design.slide_width_emu / EMU_PER_INCH, 4),
+            height=round(design.slide_height_emu / EMU_PER_INCH, 4),
+        ),
+        "template",
+        name,
+    )
 
 
 def specs_for(pages: list[Page]) -> list[PageSpec]:
@@ -188,7 +253,9 @@ def render(document_id: int, project_id: ProjectId, db: DB, request: Request):
         raise HTTPException(409, "请先生成全部页面")
     specs = specs_for(pages)
     check_sources(db, request, project_id, specs)
-    deck = DeckSpec(title=presentation.title, pages=specs)
+    # Resolve before the RENDERING mutation: a 403 template must not leave status side effects.
+    theme, slide_size, theme_source, theme_name = resolve_design(db, request, presentation)
+    deck = DeckSpec(title=presentation.title, theme=theme, slide_size=slide_size, pages=specs)
     try:
         encode_deck(deck)
     except RenderInputTooLarge as exc:
@@ -221,6 +288,8 @@ def render(document_id: int, project_id: ProjectId, db: DB, request: Request):
     return RenderView(
         status=presentation.status,
         download_url=f"/api/ppt/documents/{document_id}/download?projectId={project_id}",
+        theme_source=theme_source,
+        theme_name=theme_name,
     )
 
 
@@ -229,6 +298,8 @@ def download(document_id: int, project_id: ProjectId, db: DB, request: Request):
     presentation = presentation_or_404(db, document_id, project_id)
     if presentation.status != "COMPLETED" or not presentation.ppt_path:
         raise HTTPException(409, "当前内容尚未导出，请先生成 PPTX")
+    # The company template is deliberately not rechecked: the artifact was already produced
+    # under the clearance held at render time.
     check_sources(db, request, project_id, specs_for(pages_for(db, presentation)))
     try:
         output = request.app.state.store.get(presentation.ppt_path)

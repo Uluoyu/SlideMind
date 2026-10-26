@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { FileText, Image, Layers3, RefreshCw, Search, Upload, X } from 'lucide-react';
-import { api, post, type DocumentChunk, type ProjectDocument, type SearchHit, type SearchResult, type StoredFile } from './api';
+import { api, post, type DocumentChunk, type ProjectDocument, type SearchHit, type SearchResult, type StoredFile, type TemplateFile } from './api';
 
 type Kind = 'documents' | 'assets' | 'templates';
 const kinds: { key: Kind; label: string; accept: string }[] = [
@@ -11,6 +11,9 @@ const kinds: { key: Kind; label: string; accept: string }[] = [
 const pendingStatuses = new Set(['UPLOADED', 'QUEUED', 'PARSING', 'INDEXING']);
 const documentStatusText: Record<string, string> = {
   UPLOADED: '待处理', QUEUED: '等待处理', PARSING: '正在解析', INDEXING: '正在建立索引', READY: '可检索', FAILED: '处理失败',
+};
+const templateStatusText: Record<string, string> = {
+  UPLOADED: '待解析', READY: '可应用', FAILED: '解析失败',
 };
 const securityText: Record<string, string> = { PUBLIC: '公开', INTERNAL: '内部', CONFIDENTIAL: '机密', TOP_SECRET: '绝密' };
 function errorMessage(error: unknown, fallback: string) { return error instanceof Error ? error.message : fallback; }
@@ -27,7 +30,7 @@ export default function Library({ projectId }: { projectId: number | null }) {
 function LibraryPanel({ projectId, kind, onKindChange }: {
   projectId: number | null; kind: Kind; onKindChange: (kind: Kind) => void;
 }) {
-  const [files, setFiles] = useState<(StoredFile | ProjectDocument)[]>([]);
+  const [files, setFiles] = useState<(StoredFile | ProjectDocument | TemplateFile)[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [processing, setProcessing] = useState<number[]>([]);
@@ -54,7 +57,7 @@ function LibraryPanel({ projectId, kind, onKindChange }: {
     const controller = new AbortController();
     scope.current = controller;
     if (!path) setLoading(false);
-    else api<(StoredFile | ProjectDocument)[]>(path, { signal: controller.signal })
+    else api<(StoredFile | ProjectDocument | TemplateFile)[]>(path, { signal: controller.signal })
       .then(data => { if (!controller.signal.aborted) setFiles(data); })
       .catch(e => { if (!controller.signal.aborted) setError(errorMessage(e, '读取文件失败')); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
@@ -95,7 +98,9 @@ function LibraryPanel({ projectId, kind, onKindChange }: {
       if (signal.aborted) return;
       setFiles(previous => [saved, ...previous.filter(item => item.id !== saved.id)]);
       setNotice(kind === 'documents' ? '文件已上传，处理进度会自动更新；完成后即可搜索内容。' :
-        kind === 'assets' ? '图片素材已保存到当前项目。' : '公司模板已保存到共享模板库。');
+        kind === 'assets' ? '图片素材已保存到当前项目。' :
+          saved.status === 'READY' ? '公司模板已保存并完成解析，可在项目中关联使用。' :
+            '公司模板已保存，但解析未完成；请查看原因并重试。');
     } catch (e) { if (!signal.aborted) setError(errorMessage(e, '上传失败')); }
     finally {
       mutations.current--; listRevision.current++;
@@ -119,6 +124,23 @@ function LibraryPanel({ projectId, kind, onKindChange }: {
     finally {
       mutations.current--; listRevision.current++;
       if (!signal.aborted) setProcessing(previous => previous.filter(id => id !== document.id));
+    }
+  }
+
+  async function processTemplate(template: TemplateFile) {
+    const signal = scope.current?.signal;
+    if (!signal || signal.aborted || processing.includes(template.id)) return;
+    setProcessing(previous => [...previous, template.id]); setError(''); setNotice('');
+    try {
+      // Synchronous parse; the response already carries the final status.
+      const updated = await api<TemplateFile>(`/templates/${template.id}/process`, { ...post(), signal });
+      if (!signal.aborted) {
+        setFiles(previous => previous.map(item => item.id === updated.id ? updated : item));
+        setNotice(updated.status === 'READY' ? '模板解析完成，可在项目中关联并在导出时应用。' : '模板解析失败，请查看原因或更换文件后重试。');
+      }
+    } catch (e) { if (!signal.aborted) setError(errorMessage(e, '解析模板失败')); }
+    finally {
+      if (!signal.aborted) setProcessing(previous => previous.filter(id => id !== template.id));
     }
   }
 
@@ -158,7 +180,7 @@ function LibraryPanel({ projectId, kind, onKindChange }: {
         const file = e.target.files?.[0]; if (file) void upload(file);
       }} />
       <small>{kind === 'documents' ? '上传后自动解析与建立索引；“可检索”的资料可用于搜索。' :
-        kind === 'assets' ? '图片按项目保存，供演示文稿使用。' : '公司模板保存在共享模板库中。'}</small>
+        kind === 'assets' ? '图片按项目保存，供演示文稿使用。' : '公司模板保存在共享模板库中，上传后自动解析主题（颜色、字体与页面尺寸）。'}</small>
     </div>
     <div className="section-heading compact"><h2>{current.label}</h2><span className="muted">{files.length} 个文件</span></div>
     {pollError && <div role="alert" className="message error">{pollError}</div>}
@@ -166,19 +188,29 @@ function LibraryPanel({ projectId, kind, onKindChange }: {
       <div className="empty-small">这里还没有文件。上传{kind === 'documents' ? '第一份资料，开始积累项目知识。' : `文件，建立${current.label}库。`}</div> :
       <ul className="file-list" aria-label={current.label}>{files.map(file => {
         const document = kind === 'documents' ? file as ProjectDocument : null;
+        const template = kind === 'templates' ? file as TemplateFile : null;
+        const tracked = document ?? template;
+        const failed = tracked?.status === 'FAILED';
+        const ready = tracked?.status === 'READY';
         return <li className="file-row" key={file.id}>
           <span className="file-type">{file.fileType.toUpperCase()}</span><div className="file-name"><strong>{file.fileName}</strong>
             <small>{(file.sizeBytes / 1024).toFixed(1)} KB · {new Date(file.createdAt).toLocaleDateString('zh-CN')}
               {document && ` · ${document.chunkCount ?? 0} 个片段`}</small>
             {document?.processedAt && <small>处理完成于 {new Date(document.processedAt).toLocaleString('zh-CN')}</small>}
-            {document?.status === 'FAILED' && <p className="file-error" role="alert">{document.processingError || '处理未完成，请重试或上传新的文件。'}</p>}
+            {failed && <p className="file-error" role="alert">{tracked?.processingError ||
+              (document ? '处理未完成，请重试或上传新的文件。' : '模板解析未完成，请重试或上传新的文件。')}</p>}
           </div>
           <span className="file-security">{securityText[file.securityLevel] ?? file.securityLevel}</span>
-          <div className="file-status-actions"><span role="status" className={`badge ${document?.status === 'READY' ? 'green' : document?.status === 'FAILED' ? 'failed' : ''}`}>
-            {document ? documentStatusText[document.status] ?? '待处理' : '已保存'}</span>
+          <div className="file-status-actions"><span role="status" className={`badge ${ready ? 'green' : failed ? 'failed' : ''}`}>
+            {document ? documentStatusText[document.status] ?? '待处理' :
+              template ? templateStatusText[template.status] ?? '待解析' : '已保存'}</span>
             {document && ['FAILED', 'READY', 'UPLOADED'].includes(document.status) &&
               <button className="file-process" disabled={processing.includes(file.id)} onClick={() => void processDocument(document)}>
                 <RefreshCw size={13} />{processing.includes(file.id) ? '正在提交…' : document.status === 'FAILED' ? '重试处理' : document.status === 'READY' ? '重新索引' : '开始处理'}
+              </button>}
+            {template && ['FAILED', 'READY', 'UPLOADED'].includes(template.status) &&
+              <button className="file-process" disabled={processing.includes(file.id)} onClick={() => void processTemplate(template)}>
+                <RefreshCw size={13} />{processing.includes(file.id) ? '正在解析…' : template.status === 'FAILED' ? '重试解析' : template.status === 'READY' ? '重新解析' : '开始解析'}
               </button>}
           </div>
         </li>;

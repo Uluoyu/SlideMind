@@ -63,6 +63,7 @@ class Template(StoredFile, Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(128))
     version: Mapped[int] = mapped_column(default=1)
+    processing_error: Mapped[str | None] = mapped_column(Text)
 
 
 class DesignSystem(Timestamped, Base):

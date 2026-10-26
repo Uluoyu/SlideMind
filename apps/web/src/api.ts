@@ -10,6 +10,14 @@ export type DocumentStatus = 'UPLOADED' | 'QUEUED' | 'PARSING' | 'INDEXING' | 'R
 export interface ProjectDocument extends StoredFile {
   status: DocumentStatus; processingError: string | null; chunkCount: number; processedAt: string | null;
 }
+export type TemplateStatus = 'UPLOADED' | 'READY' | 'FAILED';
+export interface TemplateFile extends StoredFile {
+  status: TemplateStatus; processingError: string | null;
+}
+export interface RenderResult {
+  status: string; downloadUrl: string;
+  themeSource: 'default' | 'template'; themeName: string;
+}
 export interface SearchHit {
   chunkId: number; score: number; source: SourceReference; location: string | null;
 }

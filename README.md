@@ -1,12 +1,12 @@
 # SlideMind
 
-个人 PPT 智能体工作台。基于[项目设计文档](./个人%20PPT%20智能体项目设计文档.md)，已实现基础框架与 Phase 2 文档解析、项目 RAG。
+个人 PPT 智能体工作台。基于[项目设计文档](./个人%20PPT%20智能体项目设计文档.md)，已实现基础框架、Phase 2 文档解析与项目 RAG、Phase 3 公司模板解析与主题应用。
 
 已打通：**创建项目 → 上传资料/素材/模板 → 创建 PPT → 生成与确认大纲 → 编辑页面草稿 → 导出并下载 PPTX**。
 
 资料库已支持 **上传 → 后台解析 → 分块和向量入库 → 混合检索 → 重排 → 查看原文来源**。PDF 保留页码，PPTX 保留幻灯片编号，DOCX 保留段落/表格位置；TXT、Markdown 同样可检索。
 
-当前 PPT 大纲和页面仍使用本地规则，检索结果尚未自动填入页面；公司模板尚未自动应用，导出使用默认主题。页面中的项目结论和数据仍需用户补充与核实。
+公司模板上传后自动解析主题（颜色、标题/正文字体、页面尺寸）；关联模板的项目导出 PPTX 时自动套用，未关联或解析失败时回退默认主题并明确提示。当前 PPT 大纲和页面仍使用本地规则，检索结果尚未自动填入页面；页面中的项目结论和数据仍需用户补充与核实。
 
 ## 快速启动
 
@@ -18,7 +18,7 @@ npm ci
 npm run db:migrate
 ```
 
-无配置时默认使用 `data/slidemind.db` 与 `data/storage/`，不需要 Docker。新安装可复制 `.env.example` 为根目录 `.env` 并配置服务；已有 `.env` 请保留并按需修改。已有安装也必须执行 `npm run db:migrate` 升级资料处理字段。
+无配置时默认使用 `data/slidemind.db` 与 `data/storage/`，不需要 Docker。新安装可复制 `.env.example` 为根目录 `.env` 并配置服务；已有 `.env` 请保留并按需修改。已有安装也必须执行 `npm run db:migrate` 升级资料处理与模板解析状态字段。
 
 当前开发工作区已配置内网 PostgreSQL、MinIO 和模型服务，远程数据库已迁移到 `0002`，可直接启动应用。实际 PostgreSQL 16.15 + pgvector 0.8.6、MinIO、Embedding 和 Reranker 的完整文档检索流程已验证，详见 [Phase 2 验收记录](./docs/phase2-verification.md)。
 
@@ -37,7 +37,7 @@ npm run dev
 
 打开 <http://127.0.0.1:5173>。API 文档位于 <http://127.0.0.1:8000/docs>。
 
-1. 创建项目，按需上传资料、图片和公司模板。项目资料自动处理为“可检索”，失败时显示原因并支持重试。
+1. 创建项目，按需上传资料、图片和公司模板。项目资料自动处理为“可检索”，公司模板自动解析为主题（失败可重试），均显示原因。
 2. 创建 PPT 任务，填写主题、页数、汇报对象及重点。
 3. 生成初始大纲，调整标题、用途、顺序和页数，确认并保存。
 4. 生成页面草稿，逐页编辑标题、副标题、布局和正文，保存当前页。
@@ -62,7 +62,7 @@ Qwen3 Embedding 的查询会添加检索指令，原文保持原样。当前 Rer
 
 可选本地模型：`SLIDEMIND_EMBEDDING_PROVIDER=local`、`SLIDEMIND_EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5`、`SLIDEMIND_RETRIEVAL_MIN_SIMILARITY=0.5`。首次索引时 FastEmbed 下载 ONNX 模型至 `.cache/fastembed`，后续复用缓存；无需本地模型时使用 HTTP provider，不会加载本地权重。留空 `SLIDEMIND_RERANKER_URL` 可仅使用混合检索。
 
-扫描文档 OCR、图片语义检索、XLSX 内容解析尚未支持。旧 XLSX 上传接口保留，但处理会明确提示转换为支持的格式。公司模板和图片素材保持独立存储，不自动作为项目文档索引。
+扫描文档 OCR、图片语义检索、XLSX 内容解析尚未支持。旧 XLSX 上传接口保留，但处理会明确提示转换为支持的格式。公司模板和图片素材保持独立存储，不自动作为项目文档索引。模板上传后同步解析主题色、标题/正文字体、页面尺寸与版式清单并写入设计系统；关联模板的项目导出时套用，解析失败或未关联时回退默认主题并在导出结果中说明。项目模板可在创建时选择，也可在项目区随时更换或清除。
 
 ## 验证
 
@@ -122,15 +122,15 @@ SLIDEMIND_STORAGE_BACKEND=minio
 | `apps/web` | React + TypeScript 工作台，项目/资料/大纲/页面编辑/下载 |
 | `apps/api` | FastAPI、SQLAlchemy、Alembic，项目隔离及持久化 |
 | `apps/agent` | 本地大纲规划器、页面草稿生成器、工作流状态定义 |
-| `apps/ppt-renderer` | PptxGenJS 独立服务，支持封面、双栏、总结布局 |
+| `apps/ppt-renderer` | PptxGenJS 独立服务，支持封面、双栏、总结布局，套用主题颜色、字体与页面尺寸 |
 | `apps/rag` | HTTP/本地 Embedding、HTTP Reranker、中文关键词与向量混合排名 |
-| `apps/document-parser` | PDF/DOCX/PPTX/TXT/MD 文本解析、来源位置和分块 |
+| `apps/document-parser` | PDF/DOCX/PPTX/TXT/MD 文本解析、来源位置和分块；公司模板主题提取 |
 | `apps/vision-qa` | 视觉检查协议，尚未接入图像转换或模型 |
 | `packages/schemas` | Pydantic Page JSON 与导出的 JSON Schema |
 | `packages/common` | 安全等级等共享规则 |
 | `deploy/compose` | 可选 PostgreSQL/pgvector 与 MinIO |
 
-架构、API 契约及后续接入点见 [docs/architecture.md](./docs/architecture.md)。本阶段不代表设计文档中的完整 MVP：公司 Design System 提取、素材自动选择、模型规划与证据驱动的正文生成、PDF/PNG 预览、Vision QA 和自动修复仍待实现。
+架构、API 契约及后续接入点见 [docs/architecture.md](./docs/architecture.md)。本阶段不代表设计文档中的完整 MVP：素材自动选择、模型规划与证据驱动的正文生成、PDF/PNG 预览、Vision QA 和自动修复仍待实现；模板已支持主题级应用（颜色、字体、页面尺寸），Logo/背景图提取与占位符级布局映射留待后续阶段。
 
 ## 常见问题
 
@@ -138,6 +138,7 @@ SLIDEMIND_STORAGE_BACKEND=minio
 - 导出返回 503 时，确认渲染器已启动、`SLIDEMIND_RENDERER_URL` 正确，以及存储可写。页面会保留，可重新导出。
 - 页面保存提示版本冲突时，保留需要的修改文本，刷新后重新编辑。接口用版本号阻止旧页面覆盖新内容。
 - 资料处理失败时先看文件旁的原因；模型服务恢复后点击“重试处理”。正常关闭会重新排队当前任务，意外退出的任务在租约到期后恢复（默认 120 秒）。
+- 导出提示使用默认主题时，检查项目关联的公司模板是否为“可应用”状态；解析失败先在“资料与模板”中查看原因并重试解析，然后重新导出。
 - 修改 Pydantic 页面契约后运行 `npm run schema:export`，同步提交 `packages/schemas/deck.schema.json`；`schema:check` 用于检查漂移。
 - `.env` 由 Python API 读取；Node 渲染器端口通过进程环境变量 `RENDERER_PORT` 配置。Vite 代理默认指向 8000，可通过 `SLIDEMIND_API_PROXY` 修改。
 - 当前是本机单用户模式，没有登录与多租户认证。项目过滤用于防止资料串用，不能代替用户身份校验。部署到共享网络前需要补认证、授权与受保护的服务入口。

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { ArrowRight, BookOpen, ChevronRight, Folder, Layers3, LayoutDashboard, Plus, Sparkles } from 'lucide-react';
-import { api, post, statusText, type Outline, type Presentation, type Project, type StoredFile } from './api';
+import { api, post, statusText, type Outline, type Presentation, type Project, type TemplateFile } from './api';
 import Library from './Library';
 import OutlineEditor from './OutlineEditor';
 import PageEditor from './PageEditor';
@@ -14,7 +14,7 @@ export default function App() {
   const [view, setView] = useState<'workspace' | 'library'>('workspace');
   const [newProject, setNewProject] = useState(false);
   const [newDeck, setNewDeck] = useState(false);
-  const [templates, setTemplates] = useState<StoredFile[]>([]);
+  const [templates, setTemplates] = useState<TemplateFile[]>([]);
   const [requestBusy, setBusy] = useState(false);
   const [editorBusy, setEditorBusy] = useState(false);
   const [editorDirty, setEditorDirty] = useState(false);
@@ -23,6 +23,9 @@ export default function App() {
   const [error, setError] = useState('');
   const project = projects.find(p => p.id === projectId);
   const deck = presentations.find(p => p.id === presentationId);
+  const linkedTemplate = templates.find(t => t.id === project?.templateId);
+  // Only a parsed (READY) template actually applies at export; anything else falls back.
+  const templateName = linkedTemplate?.status === 'READY' ? linkedTemplate.fileName : null;
 
   const updateStatus = useCallback((status: string) => {
     setPresentations(current => current.map(p => p.id === presentationId ? { ...p, status } : p));
@@ -62,6 +65,14 @@ export default function App() {
     return () => { active = false; };
   }, [presentationId, projectId]);
 
+  // Template choices back the project-section selector; a failed fetch just leaves it empty.
+  useEffect(() => {
+    if (view !== 'workspace' || projectId === null) return;
+    let active = true;
+    api<TemplateFile[]>('/templates').then(data => { if (active) setTemplates(data); }).catch(() => {});
+    return () => { active = false; };
+  }, [view, projectId]);
+
   async function run(action: () => Promise<void>) {
     setBusy(true); setError('');
     try { await action(); } catch (e) { setError(e instanceof Error ? e.message : '操作失败'); }
@@ -70,7 +81,7 @@ export default function App() {
 
   async function openProjectForm() {
     setNewProject(true); setView('workspace');
-    await run(async () => setTemplates(await api<StoredFile[]>('/templates')));
+    await run(async () => setTemplates(await api<TemplateFile[]>('/templates')));
   }
 
   function createProject(event: FormEvent<HTMLFormElement>) {
@@ -92,6 +103,17 @@ export default function App() {
         audience: fields.get('audience'), style: fields.get('style'),
         requirements: String(fields.get('requirements')).split('\n').map(x => x.trim()).filter(Boolean) }));
       setPresentations(current => [created, ...current]); setPresentationId(created.id); setNewDeck(false);
+    });
+  }
+
+  function applyTemplate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!project) return;
+    const fields = new FormData(event.currentTarget);
+    void run(async () => {
+      const updated = await api<Project>(`/projects/${project.id}/template`,
+        post({ templateId: fields.get('templateId') ? Number(fields.get('templateId')) : null }));
+      setProjects(current => current.map(p => p.id === updated.id ? updated : p));
     });
   }
 
@@ -130,6 +152,17 @@ export default function App() {
             <label>项目说明<textarea name="description" rows={2} maxLength={4000} placeholder="项目背景、目标与使用场景" /></label><button className="primary" disabled={busy}>创建项目<ArrowRight size={16} /></button></form>}
           <section className="workflow-strip"><div><span>01</span><div><strong>整理资料</strong><small>建立你的项目知识库</small></div></div><ChevronRight size={17} /><div><span>02</span><div><strong>策划大纲</strong><small>让每一页都有明确目的</small></div></div><ChevronRight size={17} /><div><span>03</span><div><strong>设计与生成</strong><small>编辑页面，导出 PPTX</small></div></div></section>
           {project && <section><div className="section-heading"><div><span className="eyebrow">YOUR PRESENTATIONS</span><h2>{project.name}</h2><p>{project.description || '在这里管理项目的每一次表达。'}</p></div><button className="secondary" disabled={busy} onClick={() => setNewDeck(true)}><Plus size={16} />新建 PPT</button></div>
+            <form className="template-bar" onSubmit={applyTemplate}><label htmlFor="project-template">公司模板
+              <select id="project-template" name="templateId" key={project.id} defaultValue={project.templateId ?? ''}>
+                <option value="">不使用模板（默认主题）</option>
+                {templates.map(t => <option key={t.id} value={t.id}>
+                  {t.fileName}{t.status === 'READY' ? '' : `（${t.status === 'FAILED' ? '解析失败' : '待解析'}）`}</option>)}
+              </select></label>
+              <button className="secondary" disabled={busy}>应用模板</button>
+              <small className="muted">{templateName ? '导出 PPTX 时将应用该模板的主题颜色、字体与页面尺寸。' :
+                project.templateId ? '关联的模板未解析成功，导出使用默认主题；可先在“资料与模板”中重试解析。' :
+                  '未关联模板，导出使用默认主题。'}</small>
+            </form>
             {newDeck && <form className="form-panel" onSubmit={createDeck}><div className="section-heading compact"><h2>这一次，你想表达什么？</h2><button className="text-button" type="button" disabled={busy} onClick={() => setNewDeck(false)}>取消</button></div>
               <label>汇报主题<input name="title" defaultValue={project.name} required maxLength={255} /></label>
               <div className="form-grid three"><label>页数<input name="pageCount" type="number" min={1} max={50} defaultValue={8} required /></label><label>汇报对象<input name="audience" placeholder="例如：公司领导" maxLength={128} /></label><label>风格<input name="style" defaultValue="专业、简洁" maxLength={255} /></label></div>
@@ -141,7 +174,7 @@ export default function App() {
                 <OutlineEditor outline={outline} busy={busy} onChange={setOutline} onConfirm={() => updateOutline(true)} /> : <>
                   <details className="confirmed-outline"><summary>查看已确认大纲（{outline.pages.length} 页）</summary>
                     <OutlineEditor outline={outline} busy={busy} onChange={setOutline} onConfirm={() => updateOutline(true)} /></details>
-                  <PageEditor key={deck.id} documentId={deck.id} projectId={project.id}
+                  <PageEditor key={deck.id} documentId={deck.id} projectId={project.id} templateName={templateName}
                     onStatus={updateStatus} onBusy={setEditorBusy} onDirty={setEditorDirty} />
                 </> : <p className="hint">{deck.status === 'DRAFT' ? '先生成可编辑的大纲，再逐页确认汇报思路。当前使用本地规则规划器。' : '正在读取大纲…'}</p>}</div>}
           </section>}

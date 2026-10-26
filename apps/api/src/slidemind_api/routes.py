@@ -1,5 +1,6 @@
 import logging
 from dataclasses import asdict
+from io import BytesIO
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile
@@ -17,11 +18,22 @@ from slidemind_api.contracts import (
     PresentationCreate,
     PresentationView,
     ProjectCreate,
+    ProjectTemplateInput,
     ProjectView,
+    TemplateView,
 )
-from slidemind_api.models import Asset, Document, Page, Presentation, Project, Template
+from slidemind_api.models import (
+    Asset,
+    DesignSystem,
+    Document,
+    Page,
+    Presentation,
+    Project,
+    Template,
+)
 from slidemind_api.storage import inspect_upload, object_key
 from slidemind_common.security import SecurityLevel, allowed_levels
+from slidemind_parser import extract_template_design
 
 router = APIRouter(prefix="/api/ppt")
 logger = logging.getLogger(__name__)
@@ -78,6 +90,20 @@ def create_project(body: ProjectCreate, db: DB, request: Request):
 @router.get("/projects/{project_id}", response_model=ProjectView)
 def get_project(project_id: int, db: DB):
     return project_or_404(db, project_id)
+
+
+@router.post("/projects/{project_id}/template", response_model=ProjectView)
+def set_project_template(project_id: int, body: ProjectTemplateInput, db: DB, request: Request):
+    project = project_or_404(db, project_id)
+    if body.template_id is not None:
+        template = db.get(Template, body.template_id)
+        if template is None or template.security_level not in allowed_levels(
+            request.app.state.settings.security_clearance
+        ):
+            raise HTTPException(404, "模板不存在或不可访问")
+    project.template_id = body.template_id
+    db.commit()
+    return project
 
 
 def list_files(db: Session, request: Request, model, project_id: int | None = None):
@@ -178,19 +204,45 @@ def upload_asset(
     )
 
 
-@router.get("/templates", response_model=list[FileView])
+@router.get("/templates", response_model=list[TemplateView])
 def list_templates(db: DB, request: Request):
     return list_files(db, request, Template)
 
 
-@router.post("/templates", response_model=FileView, status_code=201)
+def process_template_record(db: Session, request: Request, template: Template) -> Template:
+    try:
+        design = extract_template_design(
+            BytesIO(request.app.state.store.get(template.storage_path))
+        )
+        latest = max(
+            db.scalars(select(DesignSystem.version).where(DesignSystem.template_id == template.id)),
+            default=0,
+        )
+        db.add(
+            DesignSystem(
+                template_id=template.id, design_json=design.model_dump(), version=latest + 1
+            )
+        )
+        template.status = "READY"
+        template.processing_error = None
+        template.version += 1
+    except Exception as exc:
+        template.status = "FAILED"
+        template.processing_error = (
+            str(exc)[:500] if isinstance(exc, ValueError) else "模板读取失败，请检查文件后重试。"
+        )
+    db.commit()
+    return template
+
+
+@router.post("/templates", response_model=TemplateView, status_code=201)
 def upload_template(
     file: UploadFile,
     db: DB,
     request: Request,
     security_level: SecurityLevel = Form(SecurityLevel.INTERNAL, alias="securityLevel"),
 ):
-    return save_file(
+    template = save_file(
         db,
         request,
         file,
@@ -200,6 +252,18 @@ def upload_template(
         {"pptx"},
         name=(file.filename or "公司模板").replace("\\", "/").split("/")[-1][:128],
     )
+    # The file is already stored, so upload reports 201 even when parsing fails.
+    return process_template_record(db, request, template)
+
+
+@router.post("/templates/{template_id}/process", response_model=TemplateView)
+def process_template(template_id: int, db: DB, request: Request):
+    template = db.get(Template, template_id)
+    if template is None or template.security_level not in allowed_levels(
+        request.app.state.settings.security_clearance
+    ):
+        raise HTTPException(404, "模板不存在或不可访问")
+    return process_template_record(db, request, template)
 
 
 @router.get("/projects/{project_id}/presentations", response_model=list[PresentationView])

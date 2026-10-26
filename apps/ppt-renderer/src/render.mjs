@@ -25,38 +25,45 @@ export function parseDeck(input) {
   return deck;
 }
 
-const WIDTH = 13.333;
-const HEIGHT = 7.5;
+// Font rule (mirrors PPTX majorFont=headings / minorFont=body): page titles,
+// subtitles and block titles use theme.title_font_family; block body text and
+// the footer use theme.body_font_family.
 const MARGIN = 0.65;
 const GUTTER = 0.3;
 
-function addHeader(slide, page, theme) {
+function addHeader(slide, page, theme, slideWidth) {
   slide.addText(page.title, {
-    x: MARGIN, y: 0.65, w: WIDTH - MARGIN * 2, h: 0.85,
-    fontFace: theme.font_family, fontSize: 28, bold: true,
+    x: MARGIN, y: 0.65, w: slideWidth - MARGIN * 2, h: 0.85,
+    fontFace: theme.title_font_family, fontSize: 28, bold: true,
     color: theme.text_color.slice(1), breakLine: false, margin: 0,
   });
   if (page.subtitle) slide.addText(page.subtitle, {
-    x: MARGIN, y: 1.6, w: WIDTH - MARGIN * 2, h: 0.7,
-    fontFace: theme.font_family, fontSize: 16, color: theme.text_color.slice(1), margin: 0,
+    x: MARGIN, y: 1.6, w: slideWidth - MARGIN * 2, h: 0.7,
+    fontFace: theme.title_font_family, fontSize: 16, color: theme.text_color.slice(1), margin: 0,
   });
 }
 
-function addContent(slide, page, theme) {
+function addContent(slide, page, theme, slideWidth, slideHeight) {
   const columns = page.layout === 'two_column' ? 2 : 1;
   const rows = Math.ceil(page.content.length / columns);
-  const width = (WIDTH - 2 * MARGIN - (columns - 1) * GUTTER) / columns;
-  const height = (3.8 - Math.max(0, rows - 1) * GUTTER) / Math.max(1, rows);
+  const width = (slideWidth - 2 * MARGIN - (columns - 1) * GUTTER) / columns;
+  // Keep the original 3.8in band on standard heights and clamp it so the content
+  // stays above the footer (slideHeight - 0.65) on shorter template slides (e.g. 16:10).
+  const band = Math.min(3.8, slideHeight - 1.0 - 2.55);
+  const height = (band - Math.max(0, rows - 1) * GUTTER) / Math.max(1, rows);
   for (const [index, block] of page.content.entries()) {
     const x = MARGIN + (index % columns) * (width + GUTTER);
     const y = 2.55 + Math.floor(index / columns) * (height + GUTTER);
+    // On very short rows the fixed 0.45in title would starve the body; shrink both instead.
+    const titleHeight = height >= 0.65 ? 0.45 : Math.max(0.2, height * 0.45);
+    const bodyOffset = titleHeight + 0.1;
     slide.addText(block.title, {
-      x, y, w: width, h: 0.45, fontFace: theme.font_family, fontSize: 20,
+      x, y, w: width, h: titleHeight, fontFace: theme.title_font_family, fontSize: 20,
       bold: true, color: theme.primary_color.slice(1), margin: 0,
     });
     slide.addText(block.text, {
-      x, y: y + 0.55, w: width, h: height - 0.55,
-      fontFace: theme.font_family, fontSize: 17, color: theme.text_color.slice(1),
+      x, y: y + bodyOffset, w: width, h: Math.max(0.15, height - bodyOffset),
+      fontFace: theme.body_font_family, fontSize: 17, color: theme.text_color.slice(1),
       margin: 0, valign: 'top', fit: 'shrink',
     });
   }
@@ -64,6 +71,7 @@ function addContent(slide, page, theme) {
 
 export async function renderDeck(input) {
   const deck = parseDeck(input);
+  const { width: WIDTH, height: HEIGHT } = deck.slide_size;
   const pptx = new PptxGenJS();
   pptx.defineLayout({ name: 'SLIDEMIND', width: WIDTH, height: HEIGHT });
   pptx.layout = 'SLIDEMIND';
@@ -74,11 +82,11 @@ export async function renderDeck(input) {
   for (const page of deck.pages) {
     const slide = pptx.addSlide();
     slide.background = { color: deck.theme.background_color.slice(1) };
-    addHeader(slide, page, deck.theme);
-    addContent(slide, page, deck.theme);
+    addHeader(slide, page, deck.theme, WIDTH);
+    addContent(slide, page, deck.theme, WIDTH, HEIGHT);
     slide.addText(`${deck.theme.footer}  /  ${String(page.page_no).padStart(2, '0')}`, {
       x: MARGIN, y: HEIGHT - 0.65, w: WIDTH - MARGIN * 2, h: 0.25,
-      fontFace: deck.theme.font_family, fontSize: 11, color: deck.theme.primary_color.slice(1),
+      fontFace: deck.theme.body_font_family, fontSize: 11, color: deck.theme.primary_color.slice(1),
       margin: 0,
     });
     const notes = page.content.flatMap(block => block.sources.map(source =>

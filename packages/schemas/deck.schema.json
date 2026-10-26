@@ -53,6 +53,28 @@
       "title": "PageSpec",
       "type": "object"
     },
+    "SlideSize": {
+      "additionalProperties": false,
+      "description": "Slide geometry in inches (PptxGenJS defineLayout units); 5-56in covers PowerPoint's range.",
+      "properties": {
+        "width": {
+          "default": 13.3333,
+          "maximum": 56,
+          "minimum": 5,
+          "title": "Width",
+          "type": "number"
+        },
+        "height": {
+          "default": 7.5,
+          "maximum": 56,
+          "minimum": 5,
+          "title": "Height",
+          "type": "number"
+        }
+      },
+      "title": "SlideSize",
+      "type": "object"
+    },
     "SourceReference": {
       "additionalProperties": false,
       "properties": {
@@ -161,11 +183,18 @@
           "title": "Text Color",
           "type": "string"
         },
-        "font_family": {
+        "title_font_family": {
           "default": "Microsoft YaHei",
           "maxLength": 100,
           "minLength": 1,
-          "title": "Font Family",
+          "title": "Title Font Family",
+          "type": "string"
+        },
+        "body_font_family": {
+          "default": "Microsoft YaHei",
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Body Font Family",
           "type": "string"
         },
         "footer": {
@@ -194,8 +223,16 @@
         "primary_color": "#315C4E",
         "background_color": "#F5F5F0",
         "text_color": "#182A23",
-        "font_family": "Microsoft YaHei",
+        "title_font_family": "Microsoft YaHei",
+        "body_font_family": "Microsoft YaHei",
         "footer": "SlideMind"
+      }
+    },
+    "slide_size": {
+      "$ref": "#/$defs/SlideSize",
+      "default": {
+        "width": 13.3333,
+        "height": 7.5
       }
     },
     "pages": {

@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -44,6 +45,14 @@ class DocumentView(FileView):
     processing_error: str | None
     chunk_count: int
     processed_at: datetime | None
+
+
+class TemplateView(FileView):
+    processing_error: str | None
+
+
+class ProjectTemplateInput(DTO):
+    template_id: int | None = Field(default=None, gt=0)
 
 
 class PresentationCreate(DTO):
@@ -97,3 +106,5 @@ class PageUpdate(DTO):
 class RenderView(DTO):
     status: str
     download_url: str
+    theme_source: Literal["default", "template"] = "default"
+    theme_name: str = "SlideMind Starter"
