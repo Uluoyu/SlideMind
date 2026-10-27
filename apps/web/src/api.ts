@@ -31,8 +31,13 @@ export interface Presentation {
   id: number; projectId: number; title: string; pageCount: number;
   audience: string; style: string; requirements: string[]; status: string;
 }
-export interface OutlinePage { pageNo: number; title: string; purpose: string }
-export interface Outline { pages: OutlinePage[]; status: string; planner: string }
+export interface OutlineSource {
+  chunkId: number; documentId: number; fileName: string; pageNo: number | null; location: string; excerpt: string;
+}
+export interface OutlinePage {
+  pageNo: number; title: string; purpose: string; sourceChunkIds: number[]; sources: OutlineSource[];
+}
+export interface Outline { pages: OutlinePage[]; status: string; planner: 'local-scaffold' | 'model' | string; warning: string | null }
 
 export interface SourceReference {
   document_id: number; file_name: string; page_no: number | null; excerpt: string;

@@ -4,6 +4,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
+from slidemind_agent.planner import LocalPlanner, ModelPlanner
 from slidemind_api.config import Settings
 from slidemind_api.db import create_database
 from slidemind_api.ingestion import Ingestor
@@ -13,10 +14,10 @@ from slidemind_api.rendering import HttpRenderer
 from slidemind_api.routes import router
 from slidemind_api.storage import LocalStore, MinioStore
 from slidemind_rag.embeddings import FastEmbedder
-from slidemind_rag.remote import HttpEmbedder, HttpReranker
+from slidemind_rag.remote import HttpChatModel, HttpEmbedder, HttpReranker
 
 
-def create_app(settings: Settings | None = None, *, embedder=None) -> FastAPI:
+def create_app(settings: Settings | None = None, *, embedder=None, planner=None) -> FastAPI:
     settings = settings or Settings()
 
     @asynccontextmanager
@@ -57,6 +58,19 @@ def create_app(settings: Settings | None = None, *, embedder=None) -> FastAPI:
             if settings.reranker_url
             else None
         )
+        chat = (
+            HttpChatModel(
+                settings.planner_url,
+                settings.planner_model,
+                max_tokens=settings.planner_max_tokens,
+                temperature=settings.planner_temperature,
+                timeout=settings.planner_timeout_seconds,
+                api_key=settings.planner_api_key.get_secret_value(),
+            )
+            if planner is None and settings.planner_provider == "http"
+            else None
+        )
+        app.state.planner = planner or (ModelPlanner(chat) if chat else LocalPlanner())
         app.state.ingestor = Ingestor(sessions, app.state.store, app.state.embedder, settings)
         if settings.ingestion_enabled:
             app.state.ingestor.start()
@@ -68,6 +82,8 @@ def create_app(settings: Settings | None = None, *, embedder=None) -> FastAPI:
                 app.state.embedder.close()
             if app.state.reranker:
                 app.state.reranker.close()
+            if chat:
+                chat.close()
             engine.dispose()
 
     app = FastAPI(title="SlideMind API", version="0.1.0", lifespan=lifespan)

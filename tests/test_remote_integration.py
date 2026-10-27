@@ -121,9 +121,7 @@ def test_pdf_upload_to_remote_rag_keeps_real_page_and_excerpt(
     with TestClient(create_app(settings)) as client:
         project = client.post("/api/ppt/projects", json={"name": "PDF来源验收"}).json()["id"]
         base = f"/api/ppt/projects/{project}"
-        uploaded = client.post(
-            f"{base}/documents", files={"file": ("测试报告.pdf", content)}
-        )
+        uploaded = client.post(f"{base}/documents", files={"file": ("测试报告.pdf", content)})
         assert uploaded.status_code == 201, uploaded.text
         document = uploaded.json()
         with client.app.state.sessions() as db:
@@ -146,3 +144,46 @@ def test_pdf_upload_to_remote_rag_keeps_real_page_and_excerpt(
         finally:
             # Delete only the random object just uploaded by this isolated test.
             client.app.state.store.delete(key)
+
+
+@pytest.mark.skipif(
+    Settings().planner_provider != "http", reason="Configure SLIDEMIND_PLANNER_* for the model"
+)
+def test_remote_planner_outline_follows_request_and_feedback():
+    from slidemind_agent.planner import Evidence, ModelPlanner, PlanningRequest
+    from slidemind_rag.remote import HttpChatModel
+
+    settings = Settings()
+    chat = HttpChatModel(
+        settings.planner_url,
+        settings.planner_model,
+        max_tokens=settings.planner_max_tokens,
+        temperature=settings.planner_temperature,
+        timeout=settings.planner_timeout_seconds,
+        api_key=settings.planner_api_key.get_secret_value(),
+    )
+    evidence = [
+        Evidence(101, "方案.docx", "第 3 页", "人员轨迹系统定位精度达到 1 米，覆盖 8 个洁净室。")
+    ]
+    request = PlanningRequest(
+        title="洁净室人员管理项目汇报",
+        page_count=6,
+        audience="公司领导",
+        style="专业、简洁",
+        requirements=["突出人员轨迹", "突出 AI 违规检测"],
+        evidence=evidence,
+    )
+    try:
+        planner = ModelPlanner(chat)
+        pages = planner.plan(request)
+        assert [p.page_no for p in pages] == list(range(1, 7))
+        assert all(set(p.source_ids) <= {101} for p in pages)
+        assert any("轨迹" in p.title + p.purpose for p in pages)
+        revised = planner.plan(
+            PlanningRequest(
+                **{**request.__dict__, "feedback": "删除最后一页", "current_pages": pages}
+            )
+        )
+        assert len(revised) == 5
+    finally:
+        chat.close()

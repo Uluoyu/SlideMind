@@ -5,4 +5,4 @@
 输出严格的 pages 数组，每项包含 pageNo、title、purpose，页码从 1 连续递增。
 项目资料由受权限约束的 Tool 提供。大纲必须经用户确认后才允许生成内容。
 
-当前 LocalPlanner 不调用模型。本文件供未来 DeepSeek Harness 适配器使用。
+已被 planner_v2.md 取代（Phase 4 ModelPlanner 使用）；本文件保留作版本记录。

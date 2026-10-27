@@ -1,5 +1,5 @@
 import logging
-from dataclasses import asdict
+from dataclasses import replace
 from io import BytesIO
 from typing import Annotated
 
@@ -7,13 +7,23 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Upl
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from slidemind_agent.planner import LocalPlanner, PlanningRequest
+from slidemind_agent.planner import (
+    MAX_SOURCES,
+    Evidence,
+    FeedbackUnsupported,
+    LocalPlanner,
+    PlannedPage,
+    PlanningError,
+    PlanningRequest,
+)
 from slidemind_agent.workflow import can_generate_outline
 from slidemind_api.contracts import (
     DocumentView,
     FileView,
+    OutlineGenerateInput,
     OutlineInput,
     OutlinePage,
+    OutlinePageView,
     OutlineView,
     PresentationCreate,
     PresentationView,
@@ -31,6 +41,7 @@ from slidemind_api.models import (
     Project,
     Template,
 )
+from slidemind_api.outline_evidence import MAX_PRIOR_EVIDENCE, gather_evidence, resolve_sources
 from slidemind_api.storage import inspect_upload, object_key
 from slidemind_common.security import SecurityLevel, allowed_levels
 from slidemind_parser import extract_template_design
@@ -297,7 +308,21 @@ def outline_view(db: Session, presentation: Presentation) -> OutlineView:
         select(Page).where(Page.ppt_id == presentation.id).order_by(Page.page_no)
     ).all()
     return OutlineView(
-        status=presentation.status, pages=[OutlinePage.model_validate(p) for p in pages]
+        status=presentation.status,
+        planner=presentation.planner or LocalPlanner.name,
+        warning=presentation.outline_warning,
+        pages=[
+            OutlinePageView(
+                page_no=page.page_no,
+                title=page.title,
+                purpose=page.purpose,
+                source_chunk_ids=[
+                    s["chunk_id"] for s in (page.outline_sources or [])[:MAX_SOURCES]
+                ],
+                sources=(page.outline_sources or [])[:MAX_SOURCES],
+            )
+            for page in pages
+        ],
     )
 
 
@@ -309,38 +334,135 @@ def get_outline(document_id: int, project_id: ProjectId, db: DB):
     return outline_view(db, presentation)
 
 
+def require_contiguous(pages: list[OutlinePage]):
+    if [p.page_no for p in pages] != list(range(1, len(pages) + 1)):
+        raise HTTPException(422, "页码必须从 1 开始连续排列")
+
+
+def cited_sources(db: Session, request: Request, project_id: int, pages: list[OutlinePage]):
+    """Resolve every cited chunk id against the project; unknown ids are a client error."""
+    wanted = {chunk_id for page in pages for chunk_id in page.source_chunk_ids}
+    sources = resolve_sources(db, project_id, request.app.state.settings.security_clearance, wanted)
+    if missing := wanted - sources.keys():
+        stale = "、".join(f"第 {p.page_no} 页" for p in pages if missing & set(p.source_chunk_ids))
+        raise HTTPException(
+            422,
+            f"大纲引用了当前项目之外、无权访问或已失效的资料（{stale}），请移除这些引用或重新生成",
+        )
+    return sources
+
+
+def replace_outline(db: Session, presentation: Presentation, pages, sources, status: str):
+    db.execute(delete(Page).where(Page.ppt_id == presentation.id))
+    db.add_all(
+        Page(
+            ppt_id=presentation.id,
+            page_no=page_no,
+            title=title,
+            purpose=purpose,
+            outline_sources=[sources[i] for i in dict.fromkeys(ids) if i in sources][:MAX_SOURCES],
+            status=status,
+        )
+        for page_no, title, purpose, ids in pages
+    )
+
+
 @router.post("/documents/{document_id}/outline/generate", response_model=OutlineView)
-def generate_outline(document_id: int, project_id: ProjectId, db: DB):
+def generate_outline(
+    document_id: int,
+    project_id: ProjectId,
+    db: DB,
+    request: Request,
+    body: OutlineGenerateInput | None = None,
+):
     presentation = presentation_or_404(db, document_id, project_id)
     if not can_generate_outline(presentation.status):
         raise HTTPException(409, "大纲已经确认，不能覆盖；请创建新的 PPT 任务")
-    pages = LocalPlanner().plan(
-        PlanningRequest(
-            title=presentation.title,
-            page_count=presentation.page_count,
-            audience=presentation.audience,
-            style=presentation.style,
-            requirements=presentation.requirements,
-        )
+    if body is not None and presentation.status != "OUTLINE_GENERATED":
+        raise HTTPException(409, "请先生成初始大纲，再按意见修改")
+    planner = request.app.state.planner
+    if body is not None and not planner.supports_feedback:
+        raise HTTPException(409, "按反馈重新生成需要配置模型服务；当前可直接手动编辑大纲。")
+    current, prior = [], {}
+    if body is not None:
+        require_contiguous(body.pages)
+        prior = cited_sources(db, request, project_id, body.pages)
+        # Bound what is re-sent to the chat service: earliest pages' citations first.
+        kept = list(dict.fromkeys(i for p in body.pages for i in p.source_chunk_ids))
+        prior = {i: prior[i] for i in kept[:MAX_PRIOR_EVIDENCE]}
+        current = [
+            PlannedPage(p.page_no, p.title, p.purpose, tuple(p.source_chunk_ids))
+            for p in body.pages
+        ]
+    planning = PlanningRequest(
+        title=presentation.title,
+        page_count=presentation.page_count,
+        audience=presentation.audience,
+        style=presentation.style,
+        requirements=list(presentation.requirements),
+        feedback=body.feedback if body else "",
+        current_pages=current,
     )
-    db.execute(delete(Page).where(Page.ppt_id == presentation.id))
-    db.add_all(Page(ppt_id=presentation.id, **asdict(page)) for page in pages)
+    # Retrieval and the model call can take minutes: never hold the row lock across them.
+    db.rollback()
+    warning = None
+    if planner.uses_evidence:
+        queries = [planning.title, *planning.requirements[:5], planning.feedback]
+        evidence, warning = gather_evidence(request.app.state, project_id, queries)
+        known = {item.chunk_id for item in evidence}
+        # Sources the user kept from the previous outline stay citable after revision.
+        evidence += [
+            Evidence(i, s["file_name"], s["location"], s["excerpt"])
+            for i, s in prior.items()
+            if i not in known
+        ]
+        warning = None if evidence else warning
+        planning = replace(planning, evidence=evidence)
+    try:
+        pages = planner.plan(planning)
+    except FeedbackUnsupported as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except PlanningError as exc:
+        logger.warning("Outline planning failed for presentation %s", document_id, exc_info=True)
+        raise HTTPException(502, str(exc)) from exc
+    presentation = presentation_or_404(db, document_id, project_id)
+    if not can_generate_outline(presentation.status):
+        raise HTTPException(409, "大纲已在生成期间被确认，本次结果未保存")
+    sources = resolve_sources(
+        db,
+        project_id,
+        request.app.state.settings.security_clearance,
+        {i for page in pages for i in page.source_ids},
+    )
+    replace_outline(
+        db,
+        presentation,
+        [(p.page_no, p.title, p.purpose, p.source_ids) for p in pages],
+        sources,
+        "DRAFT",
+    )
+    presentation.planner = planner.name
+    presentation.outline_warning = warning
     presentation.status = "OUTLINE_GENERATED"
     db.commit()
     return outline_view(db, presentation)
 
 
 @router.post("/documents/{document_id}/outline/confirm", response_model=OutlineView)
-def confirm_outline(document_id: int, project_id: ProjectId, body: OutlineInput, db: DB):
+def confirm_outline(
+    document_id: int, project_id: ProjectId, body: OutlineInput, db: DB, request: Request
+):
     presentation = presentation_or_404(db, document_id, project_id)
     if presentation.status != "OUTLINE_GENERATED":
         raise HTTPException(409, "当前状态不允许确认大纲")
-    if [p.page_no for p in body.pages] != list(range(1, len(body.pages) + 1)):
-        raise HTTPException(422, "页码必须从 1 开始连续排列")
-    db.execute(delete(Page).where(Page.ppt_id == presentation.id))
-    db.add_all(
-        Page(ppt_id=presentation.id, **page.model_dump(), status="OUTLINE_CONFIRMED")
-        for page in body.pages
+    require_contiguous(body.pages)
+    sources = cited_sources(db, request, project_id, body.pages)
+    replace_outline(
+        db,
+        presentation,
+        [(p.page_no, p.title, p.purpose, p.source_chunk_ids) for p in body.pages],
+        sources,
+        "OUTLINE_CONFIRMED",
     )
     presentation.page_count = len(body.pages)
     presentation.status = "OUTLINE_CONFIRMED"

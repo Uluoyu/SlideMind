@@ -76,6 +76,49 @@ class HttpEmbedder(_RemoteModel):
         return self.embed([query])[0]
 
 
+class ChatTruncated(ValueError):
+    truncated = True
+
+
+class HttpChatModel(_RemoteModel):
+    """OpenAI-compatible /v1/chat/completions; returns the first choice's text."""
+
+    def __init__(
+        self,
+        endpoint,
+        model,
+        *,
+        max_tokens=4096,
+        temperature=0.3,
+        timeout=120,
+        api_key="",
+        client=None,
+    ):
+        super().__init__(endpoint, timeout=timeout, api_key=api_key, client=client)
+        self.model = model
+        self.max_tokens, self.temperature = max_tokens, temperature
+
+    def complete(self, messages):
+        body = {
+            "messages": messages,
+            "max_tokens": self.max_tokens,
+            "temperature": self.temperature,
+            "stream": False,
+        }
+        if self.model:
+            body["model"] = self.model
+        choices = self._post(body).get("choices")
+        if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+            raise ValueError("Chat response must contain choices")
+        if choices[0].get("finish_reason") == "length":
+            raise ChatTruncated("Chat response stopped at max_tokens")
+        message = choices[0].get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, str) or not content.strip():
+            raise ValueError("Chat response content is empty")
+        return content
+
+
 class HttpReranker(_RemoteModel):
     def __init__(
         self, endpoint, model="", *, input_format="plain", timeout=15, api_key="", client=None

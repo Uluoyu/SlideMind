@@ -44,5 +44,12 @@ class Settings(BaseSettings):
     reranker_api_key: SecretStr = SecretStr("")
     reranker_timeout_seconds: int = Field(default=15, ge=1, le=60)
     reranker_min_score: float = Field(default=0.05, ge=0, le=1)
+    planner_provider: Literal["local", "http"] = "local"
+    planner_url: str = "http://127.0.0.1:8080/v1/chat/completions"
+    planner_model: str = ""
+    planner_api_key: SecretStr = SecretStr("")
+    planner_timeout_seconds: int = Field(default=120, ge=5, le=600)
+    planner_max_tokens: int = Field(default=4096, ge=256, le=32768)
+    planner_temperature: float = Field(default=0.3, ge=0, le=2)
     chunk_size: int = Field(default=400, ge=100, le=1000)
     retrieval_min_similarity: float = Field(default=0.5, ge=0, le=1)

@@ -1,6 +1,6 @@
-# 基础框架、Phase 2 与 Phase 3 架构
+# 基础框架与 Phase 2–4 架构
 
-当前实现沿用设计文档的模块边界，已打通 PPT 基础流程、项目文档解析/RAG 与公司模板主题应用。Embedding 和重排支持实际模型服务；PPT 大纲、正文生成及视觉检查尚未接入模型。
+当前实现沿用设计文档的模块边界，已打通 PPT 基础流程、项目文档解析/RAG、公司模板主题应用与模型大纲规划。Embedding、重排与大纲规划支持实际模型服务；正文生成及视觉检查尚未接入模型。
 
 ```mermaid
 flowchart LR
@@ -14,7 +14,8 @@ flowchart LR
   API --> Search[项目过滤与混合检索]
   Search --> DB
   Search --> Reranker[可选 HTTP Reranker]
-  API --> Agent[本地 Planner / 页面草稿]
+  API --> Agent[模型/本地 Planner / 页面草稿]
+  Agent -->|项目证据 + 提示词| Chat[OpenAI 兼容对话服务]
   Agent --> JSON[PageSpec / DeckSpec]
   API -->|DeckSpec JSON| Renderer[Node / PptxGenJS]
   Renderer -->|PPTX bytes| API
@@ -48,6 +49,7 @@ flowchart LR
 - 公司模板解析为 `TemplateDesign`（`packages/schemas/design.py`：主题配色槽位、标题/正文字体、EMU 页面尺寸、版式清单），存入 `ppt_design_system.design_json`，每次成功解析按版本追加，渲染时最新一行生效；渲染映射为 accent1→主色、lt1→背景、dk1→文字。
 - 引用包含 `document_id`、`file_name`、可选 `page_no`、`excerpt`。RAG 引用由服务端从实际分块构建，提供独立来源查看入口。当前页面草稿不自动添加检索引用；手动提交页面引用仍只校验项目、文件名和安全等级，正文事实及手动摘录真实性核实属于后续 Content Agent 工作。
 - 模板、项目资料、素材分别存储。关联模板仅保存选择关系，不代表已经解析和应用模板。
+- 大纲来源保存在 `ppt_page.outline_sources`（chunkId、文件、位置、≤400 字摘录的快照），规划器与检索提示保存在 `ppt_document_instance.planner/outline_warning`（迁移 0004）。模型只能引用本次检索给出的分块编号，其余编号丢弃；客户端回传的来源快照一律忽略，按编号在项目与权限范围内重建。
 - 页面正文保存在 `ppt_page.page_json`，大纲的标题与用途保持原始策划记录。导出时使用 Page JSON 中编辑后的标题。
 
 ## API
@@ -70,8 +72,8 @@ flowchart LR
 | `POST /documents` | 创建 PPT 任务 |
 | `GET /documents/{id}` | 读取任务状态 |
 | `GET /documents/{id}/outline` | 读取大纲 |
-| `POST /documents/{id}/outline/generate` | 生成或重生成未确认大纲 |
-| `POST /documents/{id}/outline/confirm` | 保存编辑结果并确认 |
+| `POST /documents/{id}/outline/generate` | 生成或重生成未确认大纲；可选 `{feedback, pages}` 以当前编辑结果按意见重排（需模型 Planner） |
+| `POST /documents/{id}/outline/confirm` | 保存编辑结果并确认；页面以 `sourceChunkIds` 引用资料，服务端重新校验并保存来源快照 |
 | `GET /documents/{id}/pages` | 读取页面、版本号及生成状态 |
 | `POST /documents/{id}/pages/generate` | 只生成缺失页面，保留已有编辑 |
 | `POST /documents/{id}/pages/{pageNo}/generate` | 生成尚未生成的单页 |
@@ -79,7 +81,7 @@ flowchart LR
 | `POST /documents/{id}/render` | 同步渲染，持久化 PPTX 后返回下载地址 |
 | `GET /documents/{id}/download` | 下载当前内容对应的 PPTX |
 
-未确认大纲、缺少页面或版本冲突返回 409；非法 Page JSON 返回 422；跨项目访问返回 404。无权访问页面引用返回 403；非法新增引用返回 422。渲染器/存储故障返回 503。
+大纲生成期间不持有数据库事务；写回前重新加锁并复核状态，若已被确认则返回 409 且不保存。对话服务不可用或输出两次无效返回 502，原大纲不变；本地 Planner 收到反馈返回 409。未确认大纲、缺少页面或版本冲突返回 409；非法 Page JSON 返回 422；跨项目访问返回 404。无权访问页面引用返回 403；非法新增引用返回 422。渲染器/存储故障返回 503。
 
 ## 状态与一致性
 
@@ -139,7 +141,7 @@ DRAFT → OUTLINE_GENERATED → OUTLINE_CONFIRMED → DESIGN_GENERATED
 
 1. **文档解析与 RAG（已实现）**：解析、分块、持久化处理、HTTP/本地 Embedding、项目过滤、混合检索、可选重排和来源查看；后续再扩展 OCR、XLSX、图片语义与大规模索引。
 2. **公司模板（已实现主题级）**：解析模板为 `DesignSystem.design_json` 并在导出时转换为 Theme 与页面尺寸；Logo/背景图提取、占位符与字号级布局映射留待后续阶段。
-3. **模型与 Agent**：为已有 `Planner` 协议添加模型实现；由服务端配置选择 provider。当前不包含 DeepSeek Harness 依赖、模型调用或密钥配置。
+3. **大纲规划（已实现）**：`ModelPlanner` 经 OpenAI 兼容对话服务规划大纲，检索项目证据并只允许引用给定编号，支持按反馈重排；`SLIDEMIND_PLANNER_PROVIDER=local` 回退 `LocalPlanner`。DeepSeek Harness 运行时、流式输出与多 Agent 编排留待后续。
 4. **内容与素材**：内容生成消费检索证据，素材选择仅引用实际上传资源；扩展 PageSpec 的同时更新 Renderer。
 5. **预览与 QA**：LibreOffice 转 PDF/PNG，再实现 `VisionInspector`；当前网页展示的是结构示意，不是最终 PPT 截图。
 6. **PPT 长任务与修复**：资料解析已有持久化 worker；PPT 生成仍需任务队列、生成事件、取消和重试，按页保存修改历史，替换当前同步渲染事务。

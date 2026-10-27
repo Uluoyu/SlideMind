@@ -1,12 +1,12 @@
 # SlideMind
 
-个人 PPT 智能体工作台。基于[项目设计文档](./个人%20PPT%20智能体项目设计文档.md)，已实现基础框架、Phase 2 文档解析与项目 RAG、Phase 3 公司模板解析与主题应用。
+个人 PPT 智能体工作台。基于[项目设计文档](./个人%20PPT%20智能体项目设计文档.md)，已实现基础框架、Phase 2 文档解析与项目 RAG、Phase 3 公司模板解析与主题应用、Phase 4 模型 PPT 大纲规划。
 
 已打通：**创建项目 → 上传资料/素材/模板 → 创建 PPT → 生成与确认大纲 → 编辑页面草稿 → 导出并下载 PPTX**。
 
 资料库已支持 **上传 → 后台解析 → 分块和向量入库 → 混合检索 → 重排 → 查看原文来源**。PDF 保留页码，PPTX 保留幻灯片编号，DOCX 保留段落/表格位置；TXT、Markdown 同样可检索。
 
-公司模板上传后自动解析主题（颜色、标题/正文字体、页面尺寸）；关联模板的项目导出 PPTX 时自动套用，未关联或解析失败时回退默认主题并明确提示。当前 PPT 大纲和页面仍使用本地规则，检索结果尚未自动填入页面；页面中的项目结论和数据仍需用户补充与核实。
+公司模板上传后自动解析主题（颜色、标题/正文字体、页面尺寸）；关联模板的项目导出 PPTX 时自动套用，未关联或解析失败时回退默认主题并明确提示。配置对话模型后，大纲由模型结合项目资料检索生成，每页附依据来源，可按自然语言意见重新调整（未配置时回退本地规则）；页面草稿仍使用本地规则，检索结果尚未自动填入页面正文；页面中的项目结论和数据仍需用户补充与核实。
 
 ## 快速启动
 
@@ -18,7 +18,7 @@ npm ci
 npm run db:migrate
 ```
 
-无配置时默认使用 `data/slidemind.db` 与 `data/storage/`，不需要 Docker。新安装可复制 `.env.example` 为根目录 `.env` 并配置服务；已有 `.env` 请保留并按需修改。已有安装也必须执行 `npm run db:migrate` 升级资料处理与模板解析状态字段。
+无配置时默认使用 `data/slidemind.db` 与 `data/storage/`，不需要 Docker。新安装可复制 `.env.example` 为根目录 `.env` 并配置服务；已有 `.env` 请保留并按需修改。已有安装也必须执行 `npm run db:migrate` 升级资料处理、模板解析与大纲来源字段（最新为 `0004`）。
 
 当前开发工作区已配置内网 PostgreSQL、MinIO 和模型服务，远程数据库已迁移到 `0002`，可直接启动应用。实际 PostgreSQL 16.15 + pgvector 0.8.6、MinIO、Embedding 和 Reranker 的完整文档检索流程已验证，详见 [Phase 2 验收记录](./docs/phase2-verification.md)。
 
@@ -39,11 +39,11 @@ npm run dev
 
 1. 创建项目，按需上传资料、图片和公司模板。项目资料自动处理为“可检索”，公司模板自动解析为主题（失败可重试），均显示原因。
 2. 创建 PPT 任务，填写主题、页数、汇报对象及重点。
-3. 生成初始大纲，调整标题、用途、顺序和页数，确认并保存。
+3. 生成初始大纲，调整标题、用途、顺序，合并或拆分页面；配置模型后可展开每页的资料依据，或写下修改意见（如“P3 和 P4 合并”）让模型重新调整。确认并保存。
 4. 生成页面草稿，逐页编辑标题、副标题、布局和正文，保存当前页。
 5. 点击“生成 PPTX”，完成后点击“下载 PPTX”。
 
-已确认大纲保持只读；页面内容可以反复修改。修改后必须重新导出，旧版本下载会失效。刷新或重启服务后仍可读取项目、页面和导出结果。
+已确认大纲保持只读（确认后的页数以实际大纲为准）；页面内容可以反复修改。修改后必须重新导出，旧版本下载会失效。刷新或重启服务后仍可读取项目、页面和导出结果。
 
 ## 资料检索与模型服务
 
@@ -61,6 +61,12 @@ Qwen3 Embedding 的查询会添加检索指令，原文保持原样。当前 Rer
 重排服务失败时保留混合检索结果并明确提示；Embedding 失败则标记索引失败或返回检索错误，不写入假向量。项目和安全等级过滤在向量计算、排名及向外部重排服务发送候选资料前执行。更换向量模型、维度或模型版本后需点击“重新索引”；同名模型更新权重时请更新 `SLIDEMIND_EMBEDDING_REVISION`。
 
 可选本地模型：`SLIDEMIND_EMBEDDING_PROVIDER=local`、`SLIDEMIND_EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5`、`SLIDEMIND_RETRIEVAL_MIN_SIMILARITY=0.5`。首次索引时 FastEmbed 下载 ONNX 模型至 `.cache/fastembed`，后续复用缓存；无需本地模型时使用 HTTP provider，不会加载本地权重。留空 `SLIDEMIND_RERANKER_URL` 可仅使用混合检索。
+
+### 大纲规划模型
+
+`SLIDEMIND_PLANNER_PROVIDER=http` 时启用模型 Planner，`SLIDEMIND_PLANNER_URL` 指向 OpenAI 兼容的 `/v1/chat/completions`（内网 Qwen/DeepSeek 等私有部署），`SLIDEMIND_PLANNER_MODEL` 为模型名，其余项见 `.env.example`。默认 `local` 为规则规划，不调用模型。
+
+生成时按主题与每条重点检索当前项目资料（项目与安全等级过滤后，最多 8 段、每段 400 字），连同 PPT 主题、重点和修改意见一并发给对话服务。当前部署按用户决定使用外网第三方服务且不额外限制外发密级：工作空间权限内（默认至 CONFIDENTIAL）的资料片段都可能发送给该服务，请确认服务商的数据保留与使用条款。外网地址请使用 `https://`；适配器不读取系统代理（`trust_env=False`），API 所在机器需能直接访问该地址。模型只能引用给定资料编号，编造的编号会被丢弃；确认时服务端按项目与权限重新校验来源并保存快照。无可用资料或检索失败时照常生成并提示“仅依据需求生成”。模型超时或输出无效返回 502，现有大纲不变。提示词位于 `apps/agent/src/slidemind_agent/prompts/planner_v2.md`。
 
 扫描文档 OCR、图片语义检索、XLSX 内容解析尚未支持。旧 XLSX 上传接口保留，但处理会明确提示转换为支持的格式。公司模板和图片素材保持独立存储，不自动作为项目文档索引。模板上传后同步解析主题色、标题/正文字体、页面尺寸与版式清单并写入设计系统；关联模板的项目导出时套用，解析失败或未关联时回退默认主题并在导出结果中说明。项目模板可在创建时选择，也可在项目区随时更换或清除。
 
@@ -121,7 +127,7 @@ SLIDEMIND_STORAGE_BACKEND=minio
 | --- | --- |
 | `apps/web` | React + TypeScript 工作台，项目/资料/大纲/页面编辑/下载 |
 | `apps/api` | FastAPI、SQLAlchemy、Alembic，项目隔离及持久化 |
-| `apps/agent` | 本地大纲规划器、页面草稿生成器、工作流状态定义 |
+| `apps/agent` | 模型/本地大纲规划器、版本化提示词、页面草稿生成器、工作流状态定义 |
 | `apps/ppt-renderer` | PptxGenJS 独立服务，支持封面、双栏、总结布局，套用主题颜色、字体与页面尺寸 |
 | `apps/rag` | HTTP/本地 Embedding、HTTP Reranker、中文关键词与向量混合排名 |
 | `apps/document-parser` | PDF/DOCX/PPTX/TXT/MD 文本解析、来源位置和分块；公司模板主题提取 |
@@ -130,7 +136,7 @@ SLIDEMIND_STORAGE_BACKEND=minio
 | `packages/common` | 安全等级等共享规则 |
 | `deploy/compose` | 可选 PostgreSQL/pgvector 与 MinIO |
 
-架构、API 契约及后续接入点见 [docs/architecture.md](./docs/architecture.md)。本阶段不代表设计文档中的完整 MVP：素材自动选择、模型规划与证据驱动的正文生成、PDF/PNG 预览、Vision QA 和自动修复仍待实现；模板已支持主题级应用（颜色、字体、页面尺寸），Logo/背景图提取与占位符级布局映射留待后续阶段。
+架构、API 契约及后续接入点见 [docs/architecture.md](./docs/architecture.md)。本阶段不代表设计文档中的完整 MVP：素材自动选择、证据驱动的正文生成（Content Agent）、PDF/PNG 预览、Vision QA 和自动修复仍待实现；模板已支持主题级应用（颜色、字体、页面尺寸），Logo/背景图提取与占位符级布局映射留待后续阶段。
 
 ## 常见问题
 

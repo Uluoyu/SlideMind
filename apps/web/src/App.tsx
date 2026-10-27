@@ -117,13 +117,16 @@ export default function App() {
     });
   }
 
-  function updateOutline(confirm: boolean) {
+  // confirm: save the edited outline; feedback: model revision of the edited outline; neither: (re)generate.
+  function updateOutline(confirm: boolean, feedback?: string) {
     if (!deck) return;
+    const pages = outline?.pages.map(({ pageNo, title, purpose, sourceChunkIds }) => ({ pageNo, title, purpose, sourceChunkIds }));
     void run(async () => {
       const result = await api<Outline>(`/documents/${deck.id}/outline/${confirm ? 'confirm' : 'generate'}?projectId=${projectId}`,
-        post(confirm ? { pages: outline?.pages } : undefined));
+        post(confirm ? { pages } : feedback ? { feedback, pages } : undefined));
       setOutline(result);
-      setPresentations(current => current.map(p => p.id === deck.id ? { ...p, status: result.status, pageCount: result.pages.length } : p));
+      // The task's page count changes only when an outline is confirmed (matches the server).
+      setPresentations(current => current.map(p => p.id === deck.id ? { ...p, status: result.status, pageCount: confirm ? result.pages.length : p.pageCount } : p));
     });
   }
 
@@ -169,14 +172,15 @@ export default function App() {
               <label>希望突出的重点<textarea name="requirements" rows={3} placeholder="每行一个重点，例如：&#10;人员轨迹分析&#10;AI 违规检测" maxLength={10000} /></label><button className="primary" disabled={busy}>创建 PPT 任务<ArrowRight size={16} /></button></form>}
             {loading ? <p role="status">正在加载项目…</p> : presentations.length === 0 ? <div className="empty-state"><span className="icon-tile"><Layers3 size={25} /></span><h3>留给下一个好想法的位置</h3><p>新建一个 PPT，先从主题与大纲开始。</p></div> :
               <div className="deck-grid">{presentations.map(p => <button key={p.id} disabled={busy} className={`deck-card ${p.id === presentationId ? 'selected' : ''}`} onClick={() => { setPresentationId(p.id); setNewDeck(false); }}><div className="deck-preview"><span>SLIDEMIND / PROJECT</span><strong>{p.title}</strong><i /></div><div className="deck-info"><strong>{p.title}</strong><span>{p.pageCount} 页 <span className="badge">{statusText[p.status] ?? p.status}</span></span></div></button>)}</div>}
-            {deck && !newDeck && <div className="selected-deck"><div className="section-heading compact"><h2>{deck.title}</h2>{deck.status === 'DRAFT' && <button className="primary" disabled={busy} onClick={() => updateOutline(false)}><Sparkles size={16} />生成初始大纲</button>}</div>
+            {deck && !newDeck && <div className="selected-deck"><div className="section-heading compact"><h2>{deck.title}</h2>{deck.status === 'DRAFT' && <button className="primary" disabled={busy} onClick={() => updateOutline(false)}><Sparkles size={16} />{requestBusy ? '正在生成大纲…' : '生成初始大纲'}</button>}</div>
               {outline ? outline.status === 'OUTLINE_GENERATED' ?
-                <OutlineEditor outline={outline} busy={busy} onChange={setOutline} onConfirm={() => updateOutline(true)} /> : <>
+                <OutlineEditor outline={outline} busy={busy} onChange={setOutline} onConfirm={() => updateOutline(true)}
+                  onRegenerate={() => updateOutline(false)} onRevise={feedback => updateOutline(false, feedback)} /> : <>
                   <details className="confirmed-outline"><summary>查看已确认大纲（{outline.pages.length} 页）</summary>
                     <OutlineEditor outline={outline} busy={busy} onChange={setOutline} onConfirm={() => updateOutline(true)} /></details>
                   <PageEditor key={deck.id} documentId={deck.id} projectId={project.id} templateName={templateName}
                     onStatus={updateStatus} onBusy={setEditorBusy} onDirty={setEditorDirty} />
-                </> : <p className="hint">{deck.status === 'DRAFT' ? '先生成可编辑的大纲，再逐页确认汇报思路。当前使用本地规则规划器。' : '正在读取大纲…'}</p>}</div>}
+                </> : <p className="hint">{deck.status === 'DRAFT' ? '先生成可编辑的大纲，再逐页确认汇报思路。配置模型服务后会结合项目资料规划，可能需要几十秒。' : '正在读取大纲…'}</p>}</div>}
           </section>}
           {!project && !newProject && !loading && <div className="empty-small">创建项目后，即可上传资料、管理模板和策划 PPT 大纲。</div>}
         </>}

@@ -104,6 +104,8 @@ class Presentation(Timestamped, Base):
     status: Mapped[str] = mapped_column(String(32), default="DRAFT")
     ppt_path: Mapped[str | None] = mapped_column(Text)
     pdf_path: Mapped[str | None] = mapped_column(Text)
+    planner: Mapped[str | None] = mapped_column(String(32))
+    outline_warning: Mapped[str | None] = mapped_column(Text)
 
 
 class Page(Timestamped, Base):
@@ -116,5 +118,7 @@ class Page(Timestamped, Base):
     purpose: Mapped[str] = mapped_column(Text, default="")
     page_type: Mapped[str] = mapped_column(String(64), default="two_column")
     page_json: Mapped[dict | None] = mapped_column(JSON)
+    # Snapshot of the evidence an outline page was planned from (OutlineSource dicts).
+    outline_sources: Mapped[list[dict] | None] = mapped_column(JSON)
     status: Mapped[str] = mapped_column(String(32), default="DRAFT")
     version: Mapped[int] = mapped_column(default=1)

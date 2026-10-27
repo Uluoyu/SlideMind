@@ -74,15 +74,38 @@ class OutlinePage(DTO):
     page_no: int = Field(ge=1, le=50)
     title: str = Field(min_length=1, max_length=80)
     purpose: str = Field(min_length=1, max_length=500)
+    # Clients cite evidence by chunk id only; the server rebuilds the snapshot it stores.
+    source_chunk_ids: list[int] = Field(default_factory=list, max_length=16)
+    # Echoed back from OutlineView by clients; never trusted, always rebuilt from the ids.
+    sources: list[dict] = Field(default_factory=list, max_length=16, exclude=True)
 
 
 class OutlineInput(DTO):
     pages: list[OutlinePage] = Field(min_length=1, max_length=50)
 
 
-class OutlineView(OutlineInput):
+class OutlineGenerateInput(OutlineInput):
+    feedback: str = Field(min_length=1, max_length=1000)
+
+
+class OutlineSource(DTO):
+    chunk_id: int
+    document_id: int
+    file_name: str
+    page_no: int | None
+    location: str
+    excerpt: str
+
+
+class OutlinePageView(OutlinePage):
+    sources: list[OutlineSource] = Field(default_factory=list, max_length=16)
+
+
+class OutlineView(DTO):
     status: str
+    pages: list[OutlinePageView]
     planner: str = "local-scaffold"
+    warning: str | None = None
 
 
 class PageView(DTO):
